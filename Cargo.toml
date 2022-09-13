@@ -1,0 +1,20 @@
+[package]
+name = "budget-executor"
+version = "0.1.0"
+edition = "2021"
+description = "A lightweight async executor that runs tasks with manually-instrumented budgets"
+repository = "https://github.com/khonsulabs/budget-executor"
+license = "MIT OR Apache-2.0"
+keywords = ["asynchronous", "async", "budget", "gas", "throttling"]
+categories = ["asynchronous"]
+readme = "./README.md"
+rust-version = "1.59.0"
+
+[dependencies]
+
+[dev-dependencies]
+flume = { version = "0.10.14" }
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+
+[workspace]
+members = ["xtask"]

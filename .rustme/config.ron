@@ -1,0 +1,50 @@
+Configuration(
+    files: {
+        "../README.md":  [
+            "header.md",
+            "docs.md",
+            "https://github.com/khonsulabs/.github/raw/main/snippets/readme-footer.md",
+        ],
+        "../src/.crate-docs.md":  (
+            for_docs: true,
+            sections: [
+                "docs.md",
+            ]
+        ),
+        "../CONTRIBUTING.md":  [
+            "https://github.com/khonsulabs/.github/raw/main/docs/CONTRIBUTING.md",
+        ],
+        "../CODE_OF_CONDUCT.md":  [
+            "https://github.com/khonsulabs/.github/raw/main/docs/CODE_OF_CONDUCT.md",
+        ],
+        "../LICENSE-APACHE":  [
+            "https://github.com/khonsulabs/.github/raw/main/licenses/LICENSE-APACHE",
+        ],
+        "../LICENSE-MIT":  [
+            "https://github.com/khonsulabs/.github/raw/main/licenses/LICENSE-MIT",
+        ],
+    },
+    glossaries: [
+        "https://github.com/khonsulabs/.github/raw/main/snippets/glossary.ron",
+        {
+            "docs-base": (
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor",
+                release: "https://docs.rs/budget-executor",
+            ),
+            "src-base": (
+                default: "https://github.com/khonsulabs/budget-executor/blob/main",
+                release: "https://github.com/khonsulabs/budget-executor/blob/v0.0.0",
+            ),
+            "checkpointer-trait": (
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/trait.Checkpointer.html",
+                release: "https://docs.rs/budget-executor/*/budget_executor/trait.Checkpointer.html",
+                for_docs: "Checkpointer",
+            ),
+            "wal-recover": (
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/struct.WriteAheadLog.html#method.recover",
+                release: "https://docs.rs/budget-executor/*/budget_executor/struct.WriteAheadLog.html#method.recover",
+                for_docs: "WriteAheadLog::recover",
+            ),
+        }
+    ],
+)
