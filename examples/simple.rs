@@ -48,3 +48,8 @@ async fn do_some_operation(times: u8) {
     // single-threaded environment, we can still call blocking operations.
     std::thread::sleep(Duration::from_millis(u64::from(times) * 100));
 }
+
+#[test]
+fn runs() {
+    main()
+}

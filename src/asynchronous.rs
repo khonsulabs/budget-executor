@@ -1,11 +1,15 @@
 use std::{
     cell::Cell,
     future::Future,
+    marker::PhantomData,
     pin::Pin,
     task::{Context, Poll, Waker},
 };
 
-use crate::{compute_overage, set_budget, Budget, BudgetResult, FUTURE_WAKER};
+use crate::{
+    set_budget, unbox_any_budget, AnyBudget, BudgetResult, Budgetable, ReplenishableBudget,
+    FUTURE_WAKER,
+};
 
 /// Executes `future` with the provided budget. The future will run until it
 /// completes or until it has invoked [`spend()`](crate::spend) enough to
@@ -22,10 +26,17 @@ use crate::{compute_overage, set_budget, Budget, BudgetResult, FUTURE_WAKER};
 ///
 /// Panics when called within from within `future` or any code invoked by
 /// `future`.
-pub fn run_with_budget<F: Future>(future: F, initial_budget: usize) -> BudgetedFuture<F> {
+pub fn run_with_budget<Budget: Budgetable, F: Future>(
+    future: F,
+    initial_budget: Budget,
+) -> BudgetedFuture<Budget, F> {
+    let initial_budget = Box::new(Some(initial_budget));
     BudgetedFuture {
-        future: Some(Box::pin(future)),
-        budget: Budget::Remaining(initial_budget),
+        state: Some(BudgetedFutureState {
+            future: Box::pin(future),
+            balance: initial_budget,
+            _budget: PhantomData,
+        }),
     }
 }
 
@@ -33,51 +44,59 @@ pub fn run_with_budget<F: Future>(future: F, initial_budget: usize) -> BudgetedF
 ///
 /// This future is returned from [`run_with_budget()`].
 #[must_use = "the future must be awaited to be executed"]
-pub struct BudgetedFuture<F> {
-    future: Option<Pin<Box<F>>>,
-    budget: Budget,
+pub struct BudgetedFuture<B, F> {
+    state: Option<BudgetedFutureState<B, F>>,
 }
 
-impl<F> Future for BudgetedFuture<F>
+struct BudgetedFutureState<B, F> {
+    future: Pin<Box<F>>,
+    balance: Box<dyn AnyBudget>,
+    _budget: PhantomData<B>,
+}
+
+impl<B, F> Future for BudgetedFuture<B, F>
 where
     F: Future,
+    B: Budgetable,
 {
-    type Output = Progress<F>;
+    type Output = Progress<B, F>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match poll_async_future_with_budget(
-            self.future
-                .take()
-                .expect("poll called after future was complete"),
-            cx,
-            self.budget,
-        ) {
+        let state = self
+            .state
+            .take()
+            .expect("poll called after future was complete");
+        match poll_async_future_with_budget(state.future, cx, state.balance) {
             BudgetPoll::Ready(result) => Poll::Ready(result),
             BudgetPoll::Pending { future, balance } => {
-                self.future = Some(future);
-                self.budget = balance;
+                self.state = Some(BudgetedFutureState {
+                    future,
+                    balance,
+                    _budget: PhantomData,
+                });
                 Poll::Pending
             }
         }
     }
 }
 
-enum BudgetPoll<F>
+enum BudgetPoll<B, F>
 where
     F: Future,
+    B: Budgetable,
 {
-    Ready(Progress<F>),
+    Ready(Progress<B, F>),
     Pending {
         future: Pin<Box<F>>,
-        balance: Budget,
+        balance: Box<dyn AnyBudget>,
     },
 }
 
-fn poll_async_future_with_budget<F: Future>(
+fn poll_async_future_with_budget<B: Budgetable, F: Future>(
     mut future: Pin<Box<F>>,
     cx: &mut Context<'_>,
-    current_budget: Budget,
-) -> BudgetPoll<F> {
+    current_budget: Box<dyn AnyBudget>,
+) -> BudgetPoll<B, F> {
     let budget_guard = set_budget(current_budget);
     FUTURE_WAKER.with(|waker| waker.set(None));
 
@@ -86,19 +105,18 @@ fn poll_async_future_with_budget<F: Future>(
     let balance = budget_guard.take_budget();
 
     match future_result {
-        Poll::Ready(output) => {
-            BudgetPoll::Ready(Progress::Complete(BudgetResult { output, balance }))
-        }
+        Poll::Ready(output) => BudgetPoll::Ready(Progress::Complete(BudgetResult {
+            output,
+            balance: unbox_any_budget(balance),
+        })),
         Poll::Pending => {
             let waker = FUTURE_WAKER.with(Cell::take);
             if let Some(waker) = waker {
                 BudgetPoll::Ready(Progress::NoBudget(IncompleteAsyncFuture {
                     future,
                     waker,
-                    remaining_budget: match balance {
-                        Budget::Remaining(budget) => budget,
-                        Budget::Overage(_) => unreachable!("invalid state"),
-                    },
+                    balance,
+                    _budget: PhantomData,
                 }))
             } else {
                 BudgetPoll::Pending { future, balance }
@@ -108,103 +126,130 @@ fn poll_async_future_with_budget<F: Future>(
 }
 
 /// The progress of a future's execution.
-pub enum Progress<F: Future> {
+pub enum Progress<Budget: Budgetable, F: Future> {
     /// The future was interrupted because it requested to spend more budget
     /// than was available.
-    NoBudget(IncompleteAsyncFuture<F>),
+    NoBudget(IncompleteAsyncFuture<Budget, F>),
     /// The future has completed.
-    Complete(BudgetResult<F::Output>),
+    Complete(BudgetResult<F::Output, Budget>),
 }
 
 /// A future that was budgeted using [`run_with_budget()`] that has
 /// not yet completed.
-pub struct IncompleteAsyncFuture<F>
+pub struct IncompleteAsyncFuture<B, F>
 where
     F: Future,
 {
     future: Pin<Box<F>>,
     waker: Waker,
-    remaining_budget: usize,
+    balance: Box<dyn AnyBudget>,
+    _budget: PhantomData<B>,
 }
 
-impl<F> IncompleteAsyncFuture<F>
+impl<B, F> IncompleteAsyncFuture<B, F>
 where
     F: Future,
+    B: Budgetable,
 {
-    /// When awaited, continues executing the provided future until it completes. Once
-    /// completed, the future's output and the final budget will be returned.
-    ///
-    /// This function returns a future that must be awaited for anything to happen.
-    pub fn continue_to_completion(self) -> ContinueToCompletion<F> {
-        let Self {
-            future,
-            waker,
-            remaining_budget,
-        } = self;
-        waker.wake();
-        ContinueToCompletion {
-            future: Some(future),
-            remaining_budget,
-        }
-    }
-
     /// Adds `additional_budget` to the remaining balance and continues
     /// executing the future.
     ///
     /// This function returns a future that must be awaited for anything to happen.
-    pub fn continue_with_additional_budget(self, additional_budget: usize) -> BudgetedFuture<F> {
+    pub fn continue_with_additional_budget(self, additional_budget: usize) -> BudgetedFuture<B, F> {
         let Self {
             future,
             waker,
-            remaining_budget,
+            mut balance,
+            ..
         } = self;
         waker.wake();
-        let budget = remaining_budget.saturating_add(additional_budget);
+        balance.replenish(additional_budget);
 
         BudgetedFuture {
-            future: Some(future),
-            budget: Budget::Remaining(budget),
+            state: Some(BudgetedFutureState {
+                future,
+                balance,
+                _budget: PhantomData,
+            }),
         }
     }
 }
 
-/// A future that continues executing a budgeted future until it completes,
-/// tracking any budget overages incurred while doing so.
-///
-/// This future is returned from
-/// [`IncompleteAsyncFuture::continue_to_completion()`].
-#[must_use = "the future must be awaited to be executed"]
-pub struct ContinueToCompletion<F> {
-    future: Option<Pin<Box<F>>>,
-    remaining_budget: usize,
-}
-
-impl<F> Future for ContinueToCompletion<F>
+impl<F> IncompleteAsyncFuture<ReplenishableBudget, F>
 where
     F: Future,
 {
-    type Output = (F::Output, Budget);
+    /// Waits for additional budget to be allocated through
+    /// [`ReplenishableBudget::replenish()`].
+    pub fn wait_for_budget(self) -> WaitForBudgetFuture<ReplenishableBudget, F> {
+        let Self {
+            future,
+            waker,
+            balance,
+            ..
+        } = self;
+        WaitForBudgetFuture {
+            has_returned_pending: false,
+            waker: Some(waker),
+            future: BudgetedFuture {
+                state: Some(BudgetedFutureState {
+                    future,
+                    balance,
+                    _budget: PhantomData,
+                }),
+            },
+        }
+    }
+}
+
+/// A future that waits for additional budget to be allocated through
+/// [`ReplenishableBudget::replenish()`].
+///
+/// This must be awaited to be executed.
+#[must_use = "the future must be awaited to be executed"]
+pub struct WaitForBudgetFuture<B, F>
+where
+    F: Future,
+{
+    has_returned_pending: bool,
+    waker: Option<Waker>,
+    future: BudgetedFuture<B, F>,
+}
+
+impl<B, F> Future for WaitForBudgetFuture<B, F>
+where
+    F: Future,
+    B: Budgetable,
+{
+    type Output = Progress<B, F>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match poll_async_future_with_budget(
-            self.future.take().expect("polled after completion"),
-            cx,
-            Budget::Overage(0),
-        ) {
-            BudgetPoll::Ready(Progress::Complete(BudgetResult { output, balance })) => {
-                Poll::Ready((output, compute_overage(self.remaining_budget, balance)))
+        if self.has_returned_pending {
+            if let Some(waker) = self.waker.take() {
+                waker.wake();
             }
-            BudgetPoll::Ready(Progress::NoBudget(_)) => {
-                unreachable!("impossible in overage mode")
+
+            let state = self
+                .future
+                .state
+                .take()
+                .expect("poll called after future was complete");
+            match poll_async_future_with_budget(state.future, cx, state.balance) {
+                BudgetPoll::Ready(result) => Poll::Ready(result),
+                BudgetPoll::Pending { future, balance } => {
+                    self.future.state = Some(BudgetedFutureState {
+                        future,
+                        balance,
+                        _budget: PhantomData,
+                    });
+                    Poll::Pending
+                }
             }
-            BudgetPoll::Pending { future, balance } => {
-                self.future = Some(future);
-                self.remaining_budget = match balance {
-                    Budget::Remaining(balance) => balance,
-                    Budget::Overage(_) => unreachable!("invalid state"),
-                };
-                Poll::Pending
-            }
+        } else {
+            self.has_returned_pending = true;
+            let state = self.future.state.as_ref().expect("always present");
+            state.balance.add_waker(cx.waker());
+            Poll::Pending
         }
     }
 }

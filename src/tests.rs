@@ -7,8 +7,9 @@ mod blocking {
 
     use crate::{
         blocking::{run_with_budget, Progress},
-        spend, Budget,
+        spend, ReplenishableBudget,
     };
+
     #[test]
     fn basic() {
         let counter = Rc::new(Cell::new(0));
@@ -41,29 +42,39 @@ mod blocking {
                 unreachable!("future didn't complete");
             }
         };
-        assert_eq!(result.balance, Budget::Remaining(0));
+        assert_eq!(result.balance, 0);
     }
 
     #[test]
-    fn overage() {
-        let counter = Rc::new(Cell::new(0));
-        let future_counter = counter.clone();
+    fn external_budget() {
+        let budget = ReplenishableBudget::default();
         let future = async move {
-            for i in 1..=100 {
+            for _ in 0..100 {
+                println!("F> Spend 1");
                 spend(1).await;
-                future_counter.set(i);
             }
+            println!("Done");
         };
 
-        let incomplete = match run_with_budget(future, 0) {
-            Progress::NoBudget(incomplete) => {
-                assert_eq!(counter.get(), 0);
-                incomplete
+        let thread_budget = budget.clone();
+        std::thread::spawn(move || {
+            for _ in 0..100 {
+                println!("T> Replenish 1");
+                thread_budget.replenish(1);
+                std::thread::sleep(Duration::from_micros(1));
             }
+            println!("T> Done");
+        });
+
+        let mut incomplete = match run_with_budget(future, budget) {
+            Progress::NoBudget(incomplete) => incomplete,
             Progress::Complete(result) => unreachable!("future completed: {result:?}"),
         };
-        let (_, budget) = incomplete.continue_to_completion();
-        assert_eq!(budget, Budget::Overage(100));
+
+        while let Progress::NoBudget(new_incomplete_task) = incomplete.wait_for_budget() {
+            println!("M> Waiting to complete");
+            incomplete = new_incomplete_task;
+        }
     }
 
     #[test]
@@ -110,15 +121,11 @@ mod blocking {
 }
 
 mod asynchronous {
-    use std::{
-        cell::Cell,
-        rc::Rc,
-        time::{Duration, Instant},
-    };
+    use std::time::{Duration, Instant};
 
     use crate::{
         asynchronous::{run_with_budget, Progress},
-        spend, Budget,
+        spend, ReplenishableBudget,
     };
 
     #[tokio::test]
@@ -158,29 +165,40 @@ mod asynchronous {
     }
 
     #[tokio::test]
-    async fn overage_async() {
-        let counter = Rc::new(Cell::new(0));
-        let future_counter = counter.clone();
-        let future = async move {
-            for i in 1..=100 {
-                spend(1).await;
-                future_counter.set(i);
-            }
-        };
-
-        let incomplete = match run_with_budget(future, 0).await {
-            Progress::NoBudget(incomplete) => {
-                assert_eq!(counter.get(), 0);
-                incomplete
-            }
-            Progress::Complete(result) => unreachable!("future completed: {result:?}"),
-        };
-        let (_, budget) = incomplete.continue_to_completion().await;
-        assert_eq!(budget, Budget::Overage(100));
-    }
-    #[tokio::test]
     #[should_panic]
     async fn reentrant_panic_async() {
         drop(run_with_budget(async { run_with_budget(async {}, 0).await }, 0).await);
+    }
+
+    #[tokio::test]
+    async fn external_budget() {
+        let budget = ReplenishableBudget::default();
+        let future = async move {
+            for _ in 0..100 {
+                println!("F> Spend 1");
+                spend(1).await;
+            }
+            println!("Done");
+        };
+
+        let thread_budget = budget.clone();
+        std::thread::spawn(move || {
+            for _ in 0..100 {
+                println!("T> Replenish 1");
+                thread_budget.replenish(1);
+                std::thread::sleep(Duration::from_micros(1));
+            }
+            println!("T> Done");
+        });
+
+        let mut incomplete = match run_with_budget(future, budget).await {
+            Progress::NoBudget(incomplete) => incomplete,
+            Progress::Complete(result) => unreachable!("future completed: {result:?}"),
+        };
+
+        while let Progress::NoBudget(new_incomplete_task) = incomplete.wait_for_budget().await {
+            println!("M> Waiting to complete");
+            incomplete = new_incomplete_task;
+        }
     }
 }

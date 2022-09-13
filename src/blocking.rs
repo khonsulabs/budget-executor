@@ -1,11 +1,15 @@
 use std::{
     cell::Cell,
     future::Future,
+    marker::PhantomData,
     pin::Pin,
     task::{Context, Poll, Waker},
 };
 
-use crate::{compute_overage, set_budget, Budget, BudgetGuard, BudgetResult, FUTURE_WAKER};
+use crate::{
+    set_budget, unbox_any_budget, AnyBudget, BudgetGuard, BudgetResult, Budgetable,
+    ReplenishableBudget, FUTURE_WAKER,
+};
 
 /// Executes `future` with the provided budget. The future will run until it
 /// completes or until it has invoked [`spend()`](crate::spend) enough to
@@ -21,41 +25,47 @@ use crate::{compute_overage, set_budget, Budget, BudgetGuard, BudgetResult, FUTU
 ///
 /// Panics when called within from within `future` or any code invoked by
 /// `future`.
-pub fn run_with_budget<F: Future>(future: F, initial_budget: usize) -> Progress<F> {
-    let budget_guard = set_budget(Budget::Remaining(initial_budget));
+pub fn run_with_budget<Budget: Budgetable, F: Future>(
+    future: F,
+    initial_budget: Budget,
+) -> Progress<Budget, F> {
+    let initial_budget = Box::new(Some(initial_budget));
+    let budget_guard = set_budget(initial_budget);
 
     let waker = budget_waker::for_current_thread();
     execute_future(Box::pin(future), waker, budget_guard)
 }
 
-fn execute_future<F: Future>(
+fn execute_future<Budget: Budgetable, F: Future>(
     mut future: Pin<Box<F>>,
     waker: Waker,
     mut budget: BudgetGuard,
-) -> Progress<F> {
+) -> Progress<Budget, F> {
     let mut pinned_future = Pin::new(&mut future);
     let mut cx = Context::from_waker(&waker);
     loop {
         let poll_result = pinned_future.poll(&mut cx);
         let balance = budget.take_budget();
+        balance.remove_waker(cx.waker());
         let ran_out_of_budget = FUTURE_WAKER.with(Cell::take).is_some();
 
         if let Poll::Ready(output) = poll_result {
-            return Progress::Complete(BudgetResult { output, balance });
+            return Progress::Complete(BudgetResult {
+                output,
+                balance: unbox_any_budget(balance),
+            });
         }
 
         if ran_out_of_budget {
             return Progress::NoBudget(IncompleteFuture {
                 future,
                 waker,
-                remaining_budget: match balance {
-                    Budget::Remaining(remaining) => remaining,
-                    Budget::Overage(_) => unreachable!("invalid state"),
-                },
+                balance,
+                _budget: PhantomData,
             });
         }
 
-        // TODO need to re-establish guard
+        balance.add_waker(cx.waker());
         budget = set_budget(balance);
         pinned_future = Pin::new(&mut future);
         std::thread::park();
@@ -64,51 +74,56 @@ fn execute_future<F: Future>(
 
 /// A future that was budgeted with [`run_with_budget()`] that has not yet
 /// completed.
-pub struct IncompleteFuture<F>
+pub struct IncompleteFuture<Budget, F>
 where
     F: Future,
 {
     future: Pin<Box<F>>,
     waker: Waker,
-    remaining_budget: usize,
+    balance: Box<dyn AnyBudget>,
+    _budget: PhantomData<Budget>,
 }
 
-impl<F> IncompleteFuture<F>
+impl<Budget, F> IncompleteFuture<Budget, F>
+where
+    F: Future,
+    Budget: Budgetable,
+{
+    /// Adds `additional_budget` to the remaining balance and continues
+    /// executing the future.
+    pub fn continue_with_additional_budget(self, additional_budget: usize) -> Progress<Budget, F> {
+        let Self {
+            future,
+            waker,
+            mut balance,
+            ..
+        } = self;
+        balance.replenish(additional_budget);
+        let budget_guard = set_budget(balance);
+
+        execute_future(future, waker, budget_guard)
+    }
+}
+
+impl<F> IncompleteFuture<ReplenishableBudget, F>
 where
     F: Future,
 {
-    /// Continues executing the provided future until it completes. Once
-    /// completed, the future's output and the final budget will be returned.
-    #[must_use]
-    pub fn continue_to_completion(self) -> (F::Output, Budget) {
+    /// Waits for additional budget to be allocated through
+    /// [`ReplenishableBudget::replenish()`].
+    pub fn wait_for_budget(self) -> Progress<ReplenishableBudget, F> {
         let Self {
             future,
             waker,
-            remaining_budget,
+            balance,
+            ..
         } = self;
-        let budget_guard = set_budget(Budget::Overage(0));
 
-        match execute_future(future, waker, budget_guard) {
-            Progress::Complete(BudgetResult { output, balance }) => {
-                (output, compute_overage(remaining_budget, balance))
-            }
-            Progress::NoBudget(_) => {
-                unreachable!("impossible in overage mode")
-            }
-        }
-    }
+        balance.add_waker(&waker);
+        std::thread::park();
+        balance.remove_waker(&waker);
 
-    /// Adds `additional_budget` to the remaining balance and continues
-    /// executing the future.
-    pub fn continue_with_additional_budget(self, additional_budget: usize) -> Progress<F> {
-        let Self {
-            future,
-            waker,
-            remaining_budget,
-        } = self;
-        let budget_guard = set_budget(Budget::Remaining(
-            remaining_budget.saturating_add(additional_budget),
-        ));
+        let budget_guard = set_budget(balance);
 
         execute_future(future, waker, budget_guard)
     }
@@ -116,12 +131,12 @@ where
 
 /// The progress of a future's execution.
 #[must_use]
-pub enum Progress<F: Future> {
+pub enum Progress<Budget, F: Future> {
     /// The future was interrupted because it requested to spend more budget
     /// than was available.
-    NoBudget(IncompleteFuture<F>),
+    NoBudget(IncompleteFuture<Budget, F>),
     /// The future has completed.
-    Complete(BudgetResult<F::Output>),
+    Complete(BudgetResult<F::Output, Budget>),
 }
 
 mod budget_waker {

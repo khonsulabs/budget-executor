@@ -46,3 +46,8 @@ async fn do_some_operation(times: u8) {
     budget_executor::spend(usize::from(times)).await;
     tokio::time::sleep(Duration::from_millis(u64::from(times) * 100)).await;
 }
+
+#[test]
+fn runs() {
+    main()
+}
