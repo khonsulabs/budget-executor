@@ -1,4 +1,4 @@
-#![doc = include_str!("../README.md")]
+#![doc = include_str!(".crate-docs.md")]
 #![warn(
     clippy::cargo,
     missing_docs,
@@ -58,6 +58,17 @@ pub struct BudgetResult<T> {
 /// Spends `amount` from the curent budget.
 ///
 /// This function returns a future which must be awaited.
+///
+/// ```rust
+/// use budget_executor::spend;
+///
+/// async fn some_task() {
+///     // Attempt to spend 5 budget. This will pause the
+///     // async task (Future) until enough budget is available.
+///     spend(5).await;
+///     // The budget was spent, proceed with the operation.
+/// }
+/// ```
 pub fn spend(amount: usize) -> SpendBudget {
     SpendBudget { amount }
 }

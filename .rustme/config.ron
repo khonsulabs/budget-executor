@@ -35,15 +35,45 @@ Configuration(
                 default: "https://github.com/khonsulabs/budget-executor/blob/main",
                 release: "https://github.com/khonsulabs/budget-executor/blob/v0.0.0",
             ),
-            "checkpointer-trait": (
-                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/trait.Checkpointer.html",
-                release: "https://docs.rs/budget-executor/*/budget_executor/trait.Checkpointer.html",
-                for_docs: "Checkpointer",
+            "blocking-run": (
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/fn.run_with_budget.html",
+                release: "https://docs.rs/budget-executor/*/budget_executor/blocking/fn.run_with_budget.html",
+                for_docs: "blocking::run_with_budget",
             ),
-            "wal-recover": (
-                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/struct.WriteAheadLog.html#method.recover",
-                release: "https://docs.rs/budget-executor/*/budget_executor/struct.WriteAheadLog.html#method.recover",
-                for_docs: "WriteAheadLog::recover",
+            "async-run": (
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/fn.run_with_budget.html",
+                release: "https://docs.rs/budget-executor/*/budget_executor/asynchronous/fn.run_with_budget.html",
+                for_docs: "asynchronous::run_with_budget",
+            ),
+            "spend": (
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/fn.spend.html",
+                release: "https://docs.rs/budget-executor/*/budget_executor/fn.spend.html",
+                for_docs: "spend",
+            ),
+            "spend": (
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/fn.spend.html",
+                release: "https://docs.rs/budget-executor/*/budget_executor/fn.spend.html",
+                for_docs: "spend",
+            ),
+            "blocking-continue": (
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/struct.IncompleteFuture.html#method.continue_with_additional_budget",
+                release: "https://docs.rs/budget-executor/*/budget_executor/blocking/struct.IncompleteFuture.html#method.continue_with_additional_budget",
+                for_docs: "blocking::IncompleteFuture::continue_with_additional_budget",
+            ),
+            "async-continue": (
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/struct.IncompleteFuture.html#method.continue_with_additional_budget",
+                release: "https://docs.rs/budget-executor/*/budget_executor/asynchronous/struct.IncompleteFuture.html#method.continue_with_additional_budget",
+                for_docs: "blocking::IncompleteFuture::continue_with_additional_budget",
+            ),
+            "async": (
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/index.html",
+                release: "https://docs.rs/budget-executor/*/budget_executor/asynchronous/index.html",
+                for_docs: "asynchronous",
+            ),
+            "blocking": (
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/index.html",
+                release: "https://docs.rs/budget-executor/*/budget_executor/blocking/index.html",
+                for_docs: "blocking",
             ),
         }
     ],
