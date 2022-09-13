@@ -1,3 +1,3 @@
 (function() {var implementors = {};
-implementors["budget_executor"] = [{"text":"impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.63.0/core/clone/trait.Clone.html\" title=\"trait core::clone::Clone\">Clone</a> for <a class=\"enum\" href=\"budget_executor/enum.Budget.html\" title=\"enum budget_executor::Budget\">Budget</a>","synthetic":false,"types":["budget_executor::Budget"]}];
+implementors["budget_executor"] = [{"text":"impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.63.0/core/clone/trait.Clone.html\" title=\"trait core::clone::Clone\">Clone</a> for <a class=\"struct\" href=\"budget_executor/struct.ReplenishableBudget.html\" title=\"struct budget_executor::ReplenishableBudget\">ReplenishableBudget</a>","synthetic":false,"types":["budget_executor::ReplenishableBudget"]}];
 if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
