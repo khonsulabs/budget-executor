@@ -122,7 +122,6 @@ mod asynchronous {
     };
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn external_runtime_compatability() {
         // This test uses flume's bounded channel mixed with a thread sleep to cause
         // the async task to wait if it sends messages too quickly. This means this
