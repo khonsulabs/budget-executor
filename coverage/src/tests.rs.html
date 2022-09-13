@@ -1655,11 +1655,11 @@
                 <a href="#125">125</a>
             </div>
             <div
-                class="column is-1 is-narrow p-0 has-text-centered has-text-white has-background-white">
-                
+                class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
+                1
             </div>
-            <div class="column has-background-white p-0">
-                <pre class="has-background-white py-0 px-2">    #[cfg_attr(miri, ignore)]</pre>
+            <div class="column has-background-success-light p-0">
+                <pre class="has-background-success-light py-0 px-2">    async fn external_runtime_compatability() {</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -1672,7 +1672,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">    async fn external_runtime_compatability() {</pre>
+                <pre class="has-background-success-light py-0 px-2">        &#x2F;&#x2F; This test uses flume&#x27;s bounded channel mixed with a thread sleep to cause</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -1685,7 +1685,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        &#x2F;&#x2F; This test uses flume&#x27;s bounded channel mixed with a thread sleep to cause</pre>
+                <pre class="has-background-success-light py-0 px-2">        &#x2F;&#x2F; the async task to wait if it sends messages too quickly. This means this</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -1698,7 +1698,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        &#x2F;&#x2F; the async task to wait if it sends messages too quickly. This means this</pre>
+                <pre class="has-background-success-light py-0 px-2">        &#x2F;&#x2F; test should take the (sleep_duration * number_of_iterations - 1) time to</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -1711,7 +1711,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        &#x2F;&#x2F; test should take the (sleep_duration * number_of_iterations - 1) time to</pre>
+                <pre class="has-background-success-light py-0 px-2">        &#x2F;&#x2F; complete. As written currently, this is 1.4 seconds with an assertion of</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -1724,7 +1724,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        &#x2F;&#x2F; complete. As written currently, this is 1.4 seconds with an assertion of</pre>
+                <pre class="has-background-success-light py-0 px-2">        &#x2F;&#x2F; greater than 1s.</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -1737,7 +1737,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        &#x2F;&#x2F; greater than 1s.</pre>
+                <pre class="has-background-success-light py-0 px-2">        let (sender, receiver) = flume::bounded(1);</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -1750,7 +1750,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        let (sender, receiver) = flume::bounded(1);</pre>
+                <pre class="has-background-success-light py-0 px-2">        tokio::task::spawn(async move {</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -1760,10 +1760,10 @@
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
-                1
+                15
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        tokio::task::spawn(async move {</pre>
+                <pre class="has-background-success-light py-0 px-2">            while let Ok(message) = receiver.recv_async().await {</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -1776,7 +1776,7 @@
                 15
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">            while let Ok(message) = receiver.recv_async().await {</pre>
+                <pre class="has-background-success-light py-0 px-2">                println!(&quot;R: received {message}&quot;);</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -1789,26 +1789,13 @@
                 15
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">                println!(&quot;R: received {message}&quot;);</pre>
+                <pre class="has-background-success-light py-0 px-2">                tokio::time::sleep(Duration::from_millis(100)).await;</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
                 id="136">
                 <a href="#136">136</a>
-            </div>
-            <div
-                class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
-                15
-            </div>
-            <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">                tokio::time::sleep(Duration::from_millis(100)).await;</pre>
-            </div>
-        </div><div class="columns p-0 m-0">
-            <div
-                class="column is-1 is-narrow p-0 has-text-centered"
-                id="137">
-                <a href="#137">137</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
@@ -1820,8 +1807,8 @@
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
-                id="138">
-                <a href="#138">138</a>
+                id="137">
+                <a href="#137">137</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-white has-background-white">
@@ -1829,6 +1816,19 @@
             </div>
             <div class="column has-background-white p-0">
                 <pre class="has-background-white py-0 px-2">            }</pre>
+            </div>
+        </div><div class="columns p-0 m-0">
+            <div
+                class="column is-1 is-narrow p-0 has-text-centered"
+                id="138">
+                <a href="#138">138</a>
+            </div>
+            <div
+                class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
+                1
+            </div>
+            <div class="column has-background-success-light p-0">
+                <pre class="has-background-success-light py-0 px-2">        });</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -1841,7 +1841,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        });</pre>
+                <pre class="has-background-success-light py-0 px-2"></pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -1854,7 +1854,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2"></pre>
+                <pre class="has-background-success-light py-0 px-2">        let task = async move {</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -1864,10 +1864,10 @@
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
-                1
+                17
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        let task = async move {</pre>
+                <pre class="has-background-success-light py-0 px-2">            for message in 0..=15 {</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -1877,10 +1877,10 @@
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
-                17
+                16
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">            for message in 0..=15 {</pre>
+                <pre class="has-background-success-light py-0 px-2">                println!(&quot;S: requesting budget&quot;);</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -1893,7 +1893,7 @@
                 16
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">                println!(&quot;S: requesting budget&quot;);</pre>
+                <pre class="has-background-success-light py-0 px-2">                spend(1).await;</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -1906,26 +1906,13 @@
                 16
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">                spend(1).await;</pre>
+                <pre class="has-background-success-light py-0 px-2">                println!(&quot;S: sending {message}&quot;);</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
                 id="145">
                 <a href="#145">145</a>
-            </div>
-            <div
-                class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
-                16
-            </div>
-            <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">                println!(&quot;S: sending {message}&quot;);</pre>
-            </div>
-        </div><div class="columns p-0 m-0">
-            <div
-                class="column is-1 is-narrow p-0 has-text-centered"
-                id="146">
-                <a href="#146">146</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
@@ -1937,8 +1924,8 @@
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
-                id="147">
-                <a href="#147">147</a>
+                id="146">
+                <a href="#146">146</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
@@ -1950,8 +1937,8 @@
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
-                id="148">
-                <a href="#148">148</a>
+                id="147">
+                <a href="#147">147</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-white has-background-white">
@@ -1963,8 +1950,8 @@
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
-                id="149">
-                <a href="#149">149</a>
+                id="148">
+                <a href="#148">148</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
@@ -1976,8 +1963,8 @@
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
-                id="150">
-                <a href="#150">150</a>
+                id="149">
+                <a href="#149">149</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-white has-background-white">
@@ -1985,6 +1972,19 @@
             </div>
             <div class="column has-background-white p-0">
                 <pre class="has-background-white py-0 px-2"></pre>
+            </div>
+        </div><div class="columns p-0 m-0">
+            <div
+                class="column is-1 is-narrow p-0 has-text-centered"
+                id="150">
+                <a href="#150">150</a>
+            </div>
+            <div
+                class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
+                1
+            </div>
+            <div class="column has-background-success-light p-0">
+                <pre class="has-background-success-light py-0 px-2">        let started_at = Instant::now();</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -1997,26 +1997,13 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        let started_at = Instant::now();</pre>
+                <pre class="has-background-success-light py-0 px-2">        let mut progress = run_with_budget(task, 0).await;</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
                 id="152">
                 <a href="#152">152</a>
-            </div>
-            <div
-                class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
-                1
-            </div>
-            <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        let mut progress = run_with_budget(task, 0).await;</pre>
-            </div>
-        </div><div class="columns p-0 m-0">
-            <div
-                class="column is-1 is-narrow p-0 has-text-centered"
-                id="153">
-                <a href="#153">153</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
@@ -2028,8 +2015,8 @@
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
-                id="154">
-                <a href="#154">154</a>
+                id="153">
+                <a href="#153">153</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
@@ -2041,8 +2028,8 @@
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
-                id="155">
-                <a href="#155">155</a>
+                id="154">
+                <a href="#154">154</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
@@ -2054,8 +2041,8 @@
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
-                id="156">
-                <a href="#156">156</a>
+                id="155">
+                <a href="#155">155</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-white has-background-white">
@@ -2063,6 +2050,19 @@
             </div>
             <div class="column has-background-white p-0">
                 <pre class="has-background-white py-0 px-2">        }</pre>
+            </div>
+        </div><div class="columns p-0 m-0">
+            <div
+                class="column is-1 is-narrow p-0 has-text-centered"
+                id="156">
+                <a href="#156">156</a>
+            </div>
+            <div
+                class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
+                1
+            </div>
+            <div class="column has-background-success-light p-0">
+                <pre class="has-background-success-light py-0 px-2">        let elapsed_time = started_at.elapsed();</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2075,7 +2075,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        let elapsed_time = started_at.elapsed();</pre>
+                <pre class="has-background-success-light py-0 px-2">        assert!(elapsed_time &gt; Duration::from_secs(1));</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2088,7 +2088,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        assert!(elapsed_time &gt; Duration::from_secs(1));</pre>
+                <pre class="has-background-success-light py-0 px-2">    }</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2097,11 +2097,11 @@
                 <a href="#159">159</a>
             </div>
             <div
-                class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
-                1
+                class="column is-1 is-narrow p-0 has-text-centered has-text-white has-background-white">
+                
             </div>
-            <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">    }</pre>
+            <div class="column has-background-white p-0">
+                <pre class="has-background-white py-0 px-2"></pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2110,11 +2110,11 @@
                 <a href="#160">160</a>
             </div>
             <div
-                class="column is-1 is-narrow p-0 has-text-centered has-text-white has-background-white">
-                
+                class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
+                1
             </div>
-            <div class="column has-background-white p-0">
-                <pre class="has-background-white py-0 px-2"></pre>
+            <div class="column has-background-success-light p-0">
+                <pre class="has-background-success-light py-0 px-2">    #[tokio::test]</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2127,7 +2127,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">    #[tokio::test]</pre>
+                <pre class="has-background-success-light py-0 px-2">    async fn overage_async() {</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2140,7 +2140,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">    async fn overage_async() {</pre>
+                <pre class="has-background-success-light py-0 px-2">        let counter = Rc::new(Cell::new(0));</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2153,7 +2153,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        let counter = Rc::new(Cell::new(0));</pre>
+                <pre class="has-background-success-light py-0 px-2">        let future_counter = counter.clone();</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2166,7 +2166,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        let future_counter = counter.clone();</pre>
+                <pre class="has-background-success-light py-0 px-2">        let future = async move {</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2176,10 +2176,10 @@
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
-                1
+                101
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        let future = async move {</pre>
+                <pre class="has-background-success-light py-0 px-2">            for i in 1..=100 {</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2189,10 +2189,10 @@
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
-                101
+                100
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">            for i in 1..=100 {</pre>
+                <pre class="has-background-success-light py-0 px-2">                spend(1).await;</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2205,26 +2205,13 @@
                 100
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">                spend(1).await;</pre>
+                <pre class="has-background-success-light py-0 px-2">                future_counter.set(i);</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
                 id="168">
                 <a href="#168">168</a>
-            </div>
-            <div
-                class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
-                100
-            </div>
-            <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">                future_counter.set(i);</pre>
-            </div>
-        </div><div class="columns p-0 m-0">
-            <div
-                class="column is-1 is-narrow p-0 has-text-centered"
-                id="169">
-                <a href="#169">169</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-white has-background-white">
@@ -2236,8 +2223,8 @@
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
-                id="170">
-                <a href="#170">170</a>
+                id="169">
+                <a href="#169">169</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
@@ -2249,8 +2236,8 @@
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
-                id="171">
-                <a href="#171">171</a>
+                id="170">
+                <a href="#170">170</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-white has-background-white">
@@ -2258,6 +2245,19 @@
             </div>
             <div class="column has-background-white p-0">
                 <pre class="has-background-white py-0 px-2"></pre>
+            </div>
+        </div><div class="columns p-0 m-0">
+            <div
+                class="column is-1 is-narrow p-0 has-text-centered"
+                id="171">
+                <a href="#171">171</a>
+            </div>
+            <div
+                class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
+                1
+            </div>
+            <div class="column has-background-success-light p-0">
+                <pre class="has-background-success-light py-0 px-2">        let incomplete = match run_with_budget(future, 0).await {</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2270,7 +2270,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        let incomplete = match run_with_budget(future, 0).await {</pre>
+                <pre class="has-background-success-light py-0 px-2">            Progress::NoBudget(incomplete) =&gt; {</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2283,7 +2283,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">            Progress::NoBudget(incomplete) =&gt; {</pre>
+                <pre class="has-background-success-light py-0 px-2">                assert_eq!(counter.get(), 0);</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2296,26 +2296,13 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">                assert_eq!(counter.get(), 0);</pre>
+                <pre class="has-background-success-light py-0 px-2">                incomplete</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
                 id="175">
                 <a href="#175">175</a>
-            </div>
-            <div
-                class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
-                1
-            </div>
-            <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">                incomplete</pre>
-            </div>
-        </div><div class="columns p-0 m-0">
-            <div
-                class="column is-1 is-narrow p-0 has-text-centered"
-                id="176">
-                <a href="#176">176</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-white has-background-white">
@@ -2327,8 +2314,8 @@
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
-                id="177">
-                <a href="#177">177</a>
+                id="176">
+                <a href="#176">176</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-danger-light has-background-danger">
@@ -2340,8 +2327,8 @@
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
-                id="178">
-                <a href="#178">178</a>
+                id="177">
+                <a href="#177">177</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-white has-background-white">
@@ -2349,6 +2336,19 @@
             </div>
             <div class="column has-background-white p-0">
                 <pre class="has-background-white py-0 px-2">        };</pre>
+            </div>
+        </div><div class="columns p-0 m-0">
+            <div
+                class="column is-1 is-narrow p-0 has-text-centered"
+                id="178">
+                <a href="#178">178</a>
+            </div>
+            <div
+                class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
+                1
+            </div>
+            <div class="column has-background-success-light p-0">
+                <pre class="has-background-success-light py-0 px-2">        let (_, budget) = incomplete.continue_to_completion().await;</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2361,7 +2361,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        let (_, budget) = incomplete.continue_to_completion().await;</pre>
+                <pre class="has-background-success-light py-0 px-2">        assert_eq!(budget, Budget::Overage(100));</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2374,7 +2374,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        assert_eq!(budget, Budget::Overage(100));</pre>
+                <pre class="has-background-success-light py-0 px-2">    }</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2387,7 +2387,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">    }</pre>
+                <pre class="has-background-success-light py-0 px-2">    #[tokio::test]</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2396,11 +2396,11 @@
                 <a href="#182">182</a>
             </div>
             <div
-                class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
-                1
+                class="column is-1 is-narrow p-0 has-text-centered has-text-white has-background-white">
+                
             </div>
-            <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">    #[tokio::test]</pre>
+            <div class="column has-background-white p-0">
+                <pre class="has-background-white py-0 px-2">    #[should_panic]</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2409,11 +2409,11 @@
                 <a href="#183">183</a>
             </div>
             <div
-                class="column is-1 is-narrow p-0 has-text-centered has-text-white has-background-white">
-                
+                class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
+                1
             </div>
-            <div class="column has-background-white p-0">
-                <pre class="has-background-white py-0 px-2">    #[should_panic]</pre>
+            <div class="column has-background-success-light p-0">
+                <pre class="has-background-success-light py-0 px-2">    async fn reentrant_panic_async() {</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -2426,26 +2426,13 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">    async fn reentrant_panic_async() {</pre>
+                <pre class="has-background-success-light py-0 px-2">        drop(run_with_budget(async { run_with_budget(async {}, 0).await }, 0).await);</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
                 id="185">
                 <a href="#185">185</a>
-            </div>
-            <div
-                class="column is-1 is-narrow p-0 has-text-centered has-text-success-light has-background-success">
-                1
-            </div>
-            <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">        drop(run_with_budget(async { run_with_budget(async {}, 0).await }, 0).await);</pre>
-            </div>
-        </div><div class="columns p-0 m-0">
-            <div
-                class="column is-1 is-narrow p-0 has-text-centered"
-                id="186">
-                <a href="#186">186</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-danger-light has-background-danger">
@@ -2457,8 +2444,8 @@
         </div><div class="columns p-0 m-0">
             <div
                 class="column is-1 is-narrow p-0 has-text-centered"
-                id="187">
-                <a href="#187">187</a>
+                id="186">
+                <a href="#186">186</a>
             </div>
             <div
                 class="column is-1 is-narrow p-0 has-text-centered has-text-white has-background-white">
@@ -2470,7 +2457,7 @@
         </div></div>
         <footer class="footer">
             <div class="content has-text-centered">
-                <p class="heading">Date: 2022-09-13 03:41</p>
+                <p class="heading">Date: 2022-09-13 03:47</p>
             </div>
         </footer>
     </body>
