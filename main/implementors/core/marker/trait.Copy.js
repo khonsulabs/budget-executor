@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["budget_executor"] = [{"text":"impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.63.0/core/marker/trait.Copy.html\" title=\"trait core::marker::Copy\">Copy</a> for <a class=\"enum\" href=\"budget_executor/enum.Budget.html\" title=\"enum budget_executor::Budget\">Budget</a>","synthetic":false,"types":["budget_executor::Budget"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
