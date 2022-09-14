@@ -73,7 +73,7 @@
                 
             </div>
             <div class="column has-background-white p-0">
-                <pre class="has-background-white py-0 px-2">use budget_executor::blocking::{run_with_budget, Progress};</pre>
+                <pre class="has-background-white py-0 px-2">use budget_executor::blocking::{run_with_budget, Progress, Runtime};</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -138,7 +138,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">    let mut progress = run_with_budget(some_task_to_limit(), 0);</pre>
+                <pre class="has-background-success-light py-0 px-2">    let mut progress = run_with_budget(some_task_to_limit, 0);</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -489,7 +489,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">async fn some_task_to_limit() -&gt; bool {</pre>
+                <pre class="has-background-success-light py-0 px-2">async fn some_task_to_limit(runtime: Runtime&lt;usize&gt;) -&gt; bool {</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -502,7 +502,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">    do_some_operation(1).await;</pre>
+                <pre class="has-background-success-light py-0 px-2">    do_some_operation(1, &amp;runtime).await;</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -515,7 +515,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">    do_some_operation(5).await;</pre>
+                <pre class="has-background-success-light py-0 px-2">    do_some_operation(5, &amp;runtime).await;</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -528,7 +528,7 @@
                 1
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">    do_some_operation(1).await;</pre>
+                <pre class="has-background-success-light py-0 px-2">    do_some_operation(1, &amp;runtime).await;</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -541,7 +541,7 @@
                 5
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">    do_some_operation(25).await;</pre>
+                <pre class="has-background-success-light py-0 px-2">    do_some_operation(25, &amp;runtime).await;</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -593,7 +593,7 @@
                 4
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">async fn do_some_operation(times: u8) {</pre>
+                <pre class="has-background-success-light py-0 px-2">async fn do_some_operation(times: u8, runtime: &amp;Runtime&lt;usize&gt;) {</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -619,7 +619,7 @@
                 7
             </div>
             <div class="column has-background-success-light p-0">
-                <pre class="has-background-success-light py-0 px-2">    budget_executor::spend(usize::from(times)).await;</pre>
+                <pre class="has-background-success-light py-0 px-2">    runtime.spend(usize::from(times)).await;</pre>
             </div>
         </div><div class="columns p-0 m-0">
             <div
@@ -754,7 +754,7 @@
         </div></div>
         <footer class="footer">
             <div class="content has-text-centered">
-                <p class="heading">Date: 2022-09-13 20:22</p>
+                <p class="heading">Date: 2022-09-14 03:09</p>
             </div>
         </footer>
     </body>
