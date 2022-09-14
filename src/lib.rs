@@ -13,10 +13,10 @@
 )]
 
 use std::{
-    any::Any,
-    cell::{Cell, RefCell},
+    cell::RefCell,
     future::Future,
     pin::Pin,
+    rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
@@ -32,66 +32,15 @@ pub mod asynchronous;
 /// blocks the current thread while executing.
 pub mod blocking;
 
-thread_local! {
-    static BUDGET: RefCell<Option<Box<dyn AnyBudget>>> = RefCell::new(None);
-
-    static FUTURE_WAKER: Cell<Option<Waker>> = Cell::new(None);
+#[derive(Debug, Clone)]
+pub struct BudgetContext<Budget> {
+    data: Rc<BudgetContextData<Budget>>,
 }
 
-trait AnyBudget {
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-
-    fn balance(&self) -> usize;
-    fn spend(&mut self, amount: usize) -> bool;
-    fn replenish(&mut self, amount: usize);
-    fn add_waker(&self, waker: &Waker);
-    fn remove_waker(&self, waker: &Waker);
-}
-
-fn unbox_any_budget<B: 'static>(mut budget: Box<dyn AnyBudget>) -> B {
-    budget
-        .as_any_mut()
-        .downcast_mut::<Option<B>>()
-        .expect("type mismatch")
-        .take()
-        .expect("never None")
-}
-
-impl<T> AnyBudget for Option<T>
-where
-    T: Budgetable,
-{
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn balance(&self) -> usize {
-        self.as_ref()
-            .expect("called outside of run_with_budget")
-            .balance()
-    }
-    fn spend(&mut self, amount: usize) -> bool {
-        self.as_mut()
-            .expect("called outside of run_with_budget")
-            .spend(amount)
-    }
-    fn replenish(&mut self, amount: usize) {
-        self.as_mut()
-            .expect("called outside of run_with_budget")
-            .replenish(amount);
-    }
-
-    fn add_waker(&self, waker: &Waker) {
-        self.as_ref()
-            .expect("called outside of run_with_budget")
-            .add_waker(waker);
-    }
-
-    fn remove_waker(&self, waker: &Waker) {
-        self.as_ref()
-            .expect("called outside of run_with_budget")
-            .remove_waker(waker);
-    }
+#[derive(Debug)]
+struct BudgetContextData<Budget> {
+    budget: RefCell<Budget>,
+    future_waker: RefCell<Option<Waker>>,
 }
 
 /// The result of a completed future.
@@ -105,111 +54,119 @@ pub struct BudgetResult<T, Budget> {
 
 /// Spends `amount` from the curent budget.
 ///
-/// This function returns a future which must be awaited.
-///
-/// ```rust
-/// use budget_executor::spend;
-///
-/// async fn some_task() {
-///     // Attempt to spend 5 budget. This will pause the
-///     // async task (Future) until enough budget is available.
-///     spend(5).await;
-///     // The budget was spent, proceed with the operation.
-/// }
-/// ```
-pub fn spend(amount: usize) -> SpendBudget {
-    SpendBudget { amount }
-}
-
-/// Spends `amount` from the curent budget.
-///
 /// This is a future that must be awaited. This future is created by `spend()`.
 #[derive(Debug)]
 #[must_use = "budget is not spent until this future is awaited"]
-pub struct SpendBudget {
+pub struct SpendBudget<'a, Budget> {
+    context: &'a BudgetContext<Budget>,
     amount: usize,
 }
 
-impl Future for SpendBudget {
+impl<'a, Budget> Future for SpendBudget<'a, Budget>
+where
+    Budget: Budgetable,
+{
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        BUDGET.with(|budget| {
-            let mut budget = budget.borrow_mut();
-            match &mut *budget {
-                Some(remaining) => {
-                    if remaining.spend(self.amount) {
-                        Poll::Ready(())
-                    } else {
-                        // Not enough budget
-                        FUTURE_WAKER.with(|waker| match waker.take() {
-                            Some(existing_waker) if existing_waker.will_wake(cx.waker()) => {
-                                waker.set(Some(existing_waker));
-                            }
-                            _ => {
-                                waker.set(Some(cx.waker().clone()));
-                            }
-                        });
-                        Poll::Pending
-                    }
+        let mut budget = self.context.data.budget.borrow_mut();
+        if budget.spend(self.amount) {
+            budget.remove_waker(cx.waker());
+            Poll::Ready(())
+        } else {
+            // Not enough budget
+
+            match &mut *self.context.data.future_waker.borrow_mut() {
+                Some(existing_waker) if existing_waker.will_wake(cx.waker()) => {
+                    *existing_waker = cx.waker().clone();
                 }
-                None => panic!("burn_gas called outside of `run_with_gas`"),
+                waker => {
+                    *waker = Some(cx.waker().clone());
+                }
             }
-        })
-    }
-}
 
-/// Retrieves the current budget.
-///
-/// This function should only be called by code that is guaranteed to be running
-/// by this executor. When called outside of code run by this executor, this function will.
-#[must_use]
-pub fn budget() -> Option<usize> {
-    BUDGET.with(|budget| {
-        let budget = budget.borrow();
-        (&*budget).as_ref().map(|budget| budget.balance())
-    })
-}
+            budget.add_waker(cx.waker());
 
-#[must_use]
-struct BudgetGuard {
-    needs_reset: bool,
-}
-
-fn set_budget(new_budget: Box<dyn AnyBudget>) -> BudgetGuard {
-    BUDGET.with(|budget| {
-        let mut budget = budget.borrow_mut();
-
-        assert!(
-            (&*budget).is_none(),
-            "blocking-executor is not able to be nested"
-        );
-        *budget = Some(new_budget);
-    });
-    BudgetGuard { needs_reset: true }
-}
-
-impl BudgetGuard {
-    pub fn take_budget(mut self) -> Box<dyn AnyBudget> {
-        self.needs_reset = false;
-
-        BUDGET.with(RefCell::take).expect("should still be present")
-        // boxed_budget
-        //     .as_any_mut()
-        //     .downcast_mut::<Option<Budget>>()
-        //     .expect("types should match")
-        //     .take()
-        //     .expect("should always be Some")
-    }
-}
-
-impl Drop for BudgetGuard {
-    fn drop(&mut self) {
-        if self.needs_reset {
-            BUDGET.with(RefCell::take);
+            Poll::Pending
         }
     }
 }
+
+impl<Budget> BudgetContext<Budget>
+where
+    Budget: Budgetable,
+{
+    /// Retrieves the current budget.
+    ///
+    /// This function should only be called by code that is guaranteed to be running
+    /// by this executor. When called outside of code run by this executor, this function will.
+    #[must_use]
+    pub fn budget(&self) -> usize {
+        let budget = self.data.budget.borrow();
+        (&*budget).get()
+    }
+
+    /// Spends `amount` from the curent budget.
+    ///
+    /// This function returns a future which must be awaited.
+    ///
+    /// ```rust
+    /// use budget_executor::spend;
+    ///
+    /// async fn some_task() {
+    ///     // Attempt to spend 5 budget. This will pause the
+    ///     // async task (Future) until enough budget is available.
+    ///     spend(5).await;
+    ///     // The budget was spent, proceed with the operation.
+    /// }
+    /// ```
+    pub fn spend(&self, amount: usize) -> SpendBudget<'_, Budget> {
+        SpendBudget {
+            context: self,
+            amount,
+        }
+    }
+}
+
+// #[must_use]
+// struct BudgetGuard {
+//     needs_reset: bool,
+// }
+
+// fn set_budget(new_budget: Box<dyn AnyBudget>) -> BudgetGuard {
+//     BUDGET.with(|budget| {
+//         let mut budget = budget.borrow_mut();
+
+//         assert!(
+//             (&*budget).is_none(),
+//             "blocking-executor is not able to be nested"
+//         );
+//         *budget = Some(new_budget);
+//     });
+//     BudgetGuard { needs_reset: true }
+// }
+
+// impl BudgetGuard {
+//     pub fn take_budget(mut self) -> Box<dyn AnyBudget> {
+//         self.needs_reset = false;
+
+//         BUDGET.with(RefCell::take).expect("should still be present")
+//         // boxed_budget
+//         //     .as_any_mut()
+//         //     .downcast_mut::<Option<Budget>>()
+//         //     .expect("types should match")
+//         //     .take()
+//         //     .expect("should always be Some")
+//     }
+// }
+
+// impl Drop for BudgetGuard {
+//     fn drop(&mut self) {
+//         if self.needs_reset {
+//             BUDGET.with(RefCell::take);
+//         }
+//     }
+// }
 
 /// A type that can be used as a budget.
 ///
@@ -220,8 +177,8 @@ impl Drop for BudgetGuard {
 pub trait Budgetable: sealed::BudgetableSealed {}
 
 mod sealed {
-    pub trait BudgetableSealed: Unpin + 'static {
-        fn balance(&self) -> usize;
+    pub trait BudgetableSealed: Clone + std::fmt::Debug + Unpin + 'static {
+        fn get(&self) -> usize;
         fn spend(&mut self, amount: usize) -> bool;
         fn replenish(&mut self, amount: usize);
         fn add_waker(&self, waker: &std::task::Waker);
@@ -241,7 +198,7 @@ impl BudgetableSealed for usize {
         }
     }
 
-    fn balance(&self) -> usize {
+    fn get(&self) -> usize {
         *self
     }
 
@@ -297,7 +254,7 @@ impl ReplenishableBudget {
 impl Budgetable for ReplenishableBudget {}
 
 impl BudgetableSealed for ReplenishableBudget {
-    fn balance(&self) -> usize {
+    fn get(&self) -> usize {
         self.data.budget.load(Ordering::Acquire)
     }
 

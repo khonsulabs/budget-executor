@@ -1,15 +1,74 @@
 use std::{
-    cell::Cell,
+    cell::RefCell,
+    collections::{HashMap, VecDeque},
+    fmt::Debug,
     future::Future,
-    marker::PhantomData,
+    ops::Deref,
     pin::Pin,
+    rc::Rc,
     task::{Context, Poll, Waker},
 };
 
 use crate::{
-    set_budget, unbox_any_budget, AnyBudget, BudgetGuard, BudgetResult, Budgetable,
-    ReplenishableBudget, FUTURE_WAKER,
+    sealed::BudgetableSealed, BudgetContext, BudgetResult, Budgetable, ReplenishableBudget,
 };
+
+#[derive(Clone)]
+pub struct Runtime<Budget> {
+    context: BudgetContext<Budget>,
+    tasks: Rc<RefCell<RuntimeTasks>>,
+}
+
+impl<Budget> Deref for Runtime<Budget> {
+    type Target = BudgetContext<Budget>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.context
+    }
+}
+
+impl<Budget> Debug for Runtime<Budget>
+where
+    Budget: Budgetable,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Runtime")
+            .field("context", &self.context)
+            .field("tasks", &())
+            .finish()
+    }
+}
+
+impl<Budget> Runtime<Budget>
+where
+    Budget: Budgetable,
+{
+    pub fn spawn<F: Future + 'static>(&self, future: F) -> TaskHandle<F::Output> {
+        let mut tasks = self.tasks.borrow_mut();
+        let status = Rc::new(RefCell::new(SpawnedTaskStatus::default()));
+        let task_id = tasks.next_task_id;
+        tasks.next_task_id = tasks.next_task_id.checked_add(1).expect("u64 wrapped");
+
+        // TODO two allocations isn't ideal. Can we do pin projection through
+        // dynamic dispatch? I think it's "safe" because it seems to fit the
+        // definition of structural pinning?
+        tasks.woke.push_back(Box::new(SpawnedTask {
+            id: task_id,
+            future: Some(Box::pin(future)),
+            status: status.clone(),
+            waker: budget_waker::for_current_thread(self.tasks.clone(), Some(task_id)),
+        }));
+
+        TaskHandle { status }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct RuntimeTasks {
+    next_task_id: u64,
+    woke: VecDeque<Box<dyn AnySpawnedTask>>,
+    pending: HashMap<u64, Box<dyn AnySpawnedTask>>,
+}
 
 /// Executes `future` with the provided budget. The future will run until it
 /// completes or until it has invoked [`spend()`](crate::spend) enough to
@@ -26,33 +85,44 @@ use crate::{
 /// Panics when called within from within `future` or any code invoked by
 /// `future`.
 pub fn run_with_budget<Budget: Budgetable, F: Future>(
-    future: F,
+    future: impl FnOnce(Runtime<Budget>) -> F,
     initial_budget: Budget,
 ) -> Progress<Budget, F> {
-    let initial_budget = Box::new(Some(initial_budget));
-    let budget_guard = set_budget(initial_budget);
+    let runtime = Runtime {
+        context: BudgetContext {
+            data: Rc::new(crate::BudgetContextData {
+                budget: RefCell::new(initial_budget),
+                future_waker: RefCell::new(None),
+            }),
+        },
+        tasks: Rc::new(RefCell::new(RuntimeTasks::default())),
+    };
 
-    let waker = budget_waker::for_current_thread();
-    execute_future(Box::pin(future), waker, budget_guard)
+    let waker = budget_waker::for_current_thread(runtime.tasks.clone(), None);
+    execute_future(Box::pin(future(runtime.clone())), waker, runtime)
 }
 
 fn execute_future<Budget: Budgetable, F: Future>(
     mut future: Pin<Box<F>>,
     waker: Waker,
-    mut budget: BudgetGuard,
+    runtime: Runtime<Budget>,
 ) -> Progress<Budget, F> {
     let mut pinned_future = Pin::new(&mut future);
     let mut cx = Context::from_waker(&waker);
     loop {
         let poll_result = pinned_future.poll(&mut cx);
-        let balance = budget.take_budget();
-        balance.remove_waker(cx.waker());
-        let ran_out_of_budget = FUTURE_WAKER.with(Cell::take).is_some();
+        runtime
+            .context
+            .data
+            .budget
+            .borrow()
+            .remove_waker(cx.waker());
+        let ran_out_of_budget = runtime.context.data.future_waker.take().is_some();
 
         if let Poll::Ready(output) = poll_result {
             return Progress::Complete(BudgetResult {
                 output,
-                balance: unbox_any_budget(balance),
+                balance: runtime.context.data.budget.borrow().clone(),
             });
         }
 
@@ -60,15 +130,32 @@ fn execute_future<Budget: Budgetable, F: Future>(
             return Progress::NoBudget(IncompleteFuture {
                 future,
                 waker,
-                balance,
-                _budget: PhantomData,
+                runtime,
             });
         }
 
-        balance.add_waker(cx.waker());
-        budget = set_budget(balance);
+        runtime.context.data.budget.borrow().add_waker(cx.waker());
         pinned_future = Pin::new(&mut future);
-        std::thread::park();
+
+        // If we have our own tasks to run, execute them. Otherwise, park
+        // the thread.
+        let mut tasks = runtime.tasks.borrow_mut();
+        if tasks.woke.is_empty() {
+            drop(tasks);
+            std::thread::park();
+        } else {
+            while let Some(mut task) = tasks.woke.pop_front() {
+                drop(tasks);
+                let result = task.poll();
+                tasks = runtime.tasks.borrow_mut();
+                match result {
+                    Poll::Ready(_) => {}
+                    Poll::Pending => {
+                        tasks.pending.insert(task.id(), task);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -80,8 +167,7 @@ where
 {
     future: Pin<Box<F>>,
     waker: Waker,
-    balance: Box<dyn AnyBudget>,
-    _budget: PhantomData<Budget>,
+    runtime: Runtime<Budget>,
 }
 
 impl<Budget, F> IncompleteFuture<Budget, F>
@@ -95,13 +181,17 @@ where
         let Self {
             future,
             waker,
-            mut balance,
+            runtime,
             ..
         } = self;
-        balance.replenish(additional_budget);
-        let budget_guard = set_budget(balance);
+        runtime
+            .context
+            .data
+            .budget
+            .borrow_mut()
+            .replenish(additional_budget);
 
-        execute_future(future, waker, budget_guard)
+        execute_future(future, waker, runtime)
     }
 }
 
@@ -115,17 +205,15 @@ where
         let Self {
             future,
             waker,
-            balance,
+            runtime,
             ..
         } = self;
 
-        balance.add_waker(&waker);
+        runtime.context.data.budget.borrow().add_waker(&waker);
         std::thread::park();
-        balance.remove_waker(&waker);
+        runtime.context.data.budget.borrow().remove_waker(&waker);
 
-        let budget_guard = set_budget(balance);
-
-        execute_future(future, waker, budget_guard)
+        execute_future(future, waker, runtime)
     }
 }
 
@@ -139,22 +227,72 @@ pub enum Progress<Budget, F: Future> {
     Complete(BudgetResult<F::Output, Budget>),
 }
 
+impl<F> Progress<ReplenishableBudget, F>
+where
+    F: Future,
+{
+    pub fn wait_until_complete(self) -> BudgetResult<F::Output, ReplenishableBudget> {
+        let mut progress = self;
+        loop {
+            match progress {
+                Progress::NoBudget(incomplete) => progress = incomplete.wait_for_budget(),
+                Progress::Complete(result) => break result,
+            }
+        }
+    }
+}
+
 mod budget_waker {
     use std::{
+        cell::RefCell,
+        rc::Rc,
         sync::Arc,
         task::{RawWaker, RawWakerVTable, Waker},
         thread::Thread,
     };
 
-    pub fn for_current_thread() -> Waker {
-        let arc_thread = Arc::new(std::thread::current());
+    use crate::blocking::RuntimeTasks;
+
+    struct WakerData {
+        thread: Thread,
+        task_id: Option<u64>,
+        tasks: Rc<RefCell<RuntimeTasks>>,
+    }
+
+    impl WakerData {
+        pub fn wake(&self) {
+            if let Some(task_id) = &self.task_id {
+                let mut tasks = self.tasks.borrow_mut();
+                if let Some(task) = tasks.pending.remove(task_id) {
+                    tasks.woke.push_back(task);
+                    drop(tasks);
+                    self.thread.unpark();
+                } else {
+                    // Task already finished or already woken, do nothing.
+                }
+            } else {
+                // The main task is unblocked, we always unpark.
+                self.thread.unpark();
+            }
+        }
+    }
+
+    pub(crate) fn for_current_thread(
+        tasks: Rc<RefCell<RuntimeTasks>>,
+        task_id: Option<u64>,
+    ) -> Waker {
+        let arc_thread = Arc::new(WakerData {
+            tasks,
+            thread: std::thread::current(),
+            task_id,
+        });
         let arc_thread = Arc::into_raw(arc_thread);
 
         unsafe { Waker::from_raw(RawWaker::new(arc_thread.cast::<()>(), &BUDGET_WAKER_VTABLE)) }
     }
 
     unsafe fn clone(arc_thread: *const ()) -> RawWaker {
-        let arc_thread: Arc<Thread> = Arc::from_raw(arc_thread.cast::<std::thread::Thread>());
+        let arc_thread: Arc<WakerData> = Arc::from_raw(arc_thread.cast::<WakerData>());
         let cloned = arc_thread.clone();
         let cloned = Arc::into_raw(cloned);
 
@@ -164,22 +302,107 @@ mod budget_waker {
     }
 
     unsafe fn wake_consuming(arc_thread: *const ()) {
-        let arc_thread: Arc<Thread> = Arc::from_raw(arc_thread as *mut Thread);
-        arc_thread.unpark();
+        let arc_thread: Arc<WakerData> = Arc::from_raw(arc_thread as *mut WakerData);
+        arc_thread.wake();
     }
 
     unsafe fn wake_by_ref(arc_thread: *const ()) {
-        let arc_thread: Arc<Thread> = Arc::from_raw(arc_thread as *mut Thread);
-        arc_thread.unpark();
+        let arc_thread: Arc<WakerData> = Arc::from_raw(arc_thread as *mut WakerData);
+        arc_thread.wake();
 
         let _ = Arc::into_raw(arc_thread);
     }
 
     unsafe fn drop_waker(arc_thread: *const ()) {
-        let arc_thread: Arc<Thread> = Arc::from_raw(arc_thread as *mut Thread);
+        let arc_thread: Arc<WakerData> = Arc::from_raw(arc_thread as *mut WakerData);
         drop(arc_thread);
     }
 
     const BUDGET_WAKER_VTABLE: RawWakerVTable =
         RawWakerVTable::new(clone, wake_consuming, wake_by_ref, drop_waker);
+}
+
+struct SpawnedTask<F>
+where
+    F: Future,
+{
+    id: u64,
+    future: Option<Pin<Box<F>>>,
+    status: Rc<RefCell<SpawnedTaskStatus<F::Output>>>,
+    waker: Waker,
+}
+
+struct SpawnedTaskStatus<Output> {
+    output: TaskOutput<Output>,
+    waker: Option<Waker>,
+}
+
+impl<Output> Default for SpawnedTaskStatus<Output> {
+    fn default() -> Self {
+        Self {
+            output: TaskOutput::NotCompleted,
+            waker: None,
+        }
+    }
+}
+
+trait AnySpawnedTask {
+    fn id(&self) -> u64;
+    fn poll(&mut self) -> Poll<()>;
+}
+
+impl<F> AnySpawnedTask for SpawnedTask<F>
+where
+    F: Future,
+{
+    fn id(&self) -> u64 {
+        self.id
+    }
+
+    fn poll(&mut self) -> Poll<()> {
+        match self.future.as_mut() {
+            Some(future) => {
+                let pinned_future = Pin::new(future);
+                match pinned_future.poll(&mut Context::from_waker(&self.waker)) {
+                    Poll::Ready(output) => {
+                        let mut status = self.status.borrow_mut();
+                        status.output = TaskOutput::Completed(Some(output));
+                        if let Some(waker) = status.waker.take() {
+                            waker.wake();
+                        }
+                        Poll::Ready(())
+                    }
+                    Poll::Pending => Poll::Pending,
+                }
+            }
+            None => Poll::Ready(()),
+        }
+    }
+}
+
+pub struct TaskHandle<Output> {
+    status: Rc<RefCell<SpawnedTaskStatus<Output>>>,
+}
+
+impl<Output> Future for TaskHandle<Output> {
+    type Output = Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut status = self.status.borrow_mut();
+        match &mut status.output {
+            TaskOutput::Completed(output) => {
+                Poll::Ready(output.take().expect("already polled completion"))
+            }
+            TaskOutput::NotCompleted => {
+                // todo check if needed to overwrite
+                status.waker = Some(cx.waker().clone());
+                Poll::Pending
+            }
+        }
+    }
+}
+
+enum TaskOutput<Output> {
+    NotCompleted,
+    Completed(Option<Output>),
 }

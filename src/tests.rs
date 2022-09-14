@@ -6,19 +6,20 @@ mod blocking {
     };
 
     use crate::{
-        blocking::{run_with_budget, Progress},
-        spend, ReplenishableBudget,
+        blocking::{run_with_budget, Progress, Runtime},
+        sealed::BudgetableSealed,
+        ReplenishableBudget,
     };
 
     #[test]
     fn basic() {
         let counter = Rc::new(Cell::new(0));
         let future_counter = counter.clone();
-        let future = async move {
+        let future = |runtime: Runtime<usize>| async move {
             future_counter.set(0);
-            spend(1).await;
+            runtime.spend(1).await;
             future_counter.set(1);
-            spend(1).await;
+            runtime.spend(1).await;
             future_counter.set(2);
         };
 
@@ -48,10 +49,10 @@ mod blocking {
     #[test]
     fn external_budget() {
         let budget = ReplenishableBudget::default();
-        let future = async move {
+        let future = |runtime: Runtime<ReplenishableBudget>| async move {
             for _ in 0..100 {
                 println!("F> Spend 1");
-                spend(1).await;
+                runtime.spend(1).await;
             }
             println!("Done");
         };
@@ -93,10 +94,10 @@ mod blocking {
             }
         });
 
-        let task = async move {
+        let task = |runtime: Runtime<usize>| async move {
             for message in 0..=15 {
                 println!("S: requesting budget");
-                spend(1).await;
+                runtime.spend(1).await;
                 println!("S: sending {message}");
                 sender.send_async(message).await.unwrap();
                 println!("S: message sent");
@@ -114,9 +115,47 @@ mod blocking {
     }
 
     #[test]
-    #[should_panic]
-    fn reentrant_panic() {
-        drop(run_with_budget(async { run_with_budget(async {}, 0) }, 0));
+    fn spawn() {
+        let budget = ReplenishableBudget::new(7);
+        // This test causes contention using a blocking flume channel. One task
+        // spends budget and sends messages while the other replenishes the
+        // budget and receives messages. To ensure that these tasks aren't
+        // completely in lock-step, the channel is bounded at 3 and budget is
+        // allocated every 7 messages.
+        let task_budget = budget.clone();
+        let task = |runtime: Runtime<ReplenishableBudget>| async move {
+            let (sender, receiver) = flume::bounded(3);
+
+            let sending_task = runtime.spawn({
+                let runtime = runtime.clone();
+                async move {
+                    for message in 0..100 {
+                        println!("S: requesting budget");
+                        runtime.spend(1).await;
+                        println!("S: sending {message}");
+                        sender.send_async(message).await.unwrap();
+                        println!("S: message sent");
+                    }
+                }
+            });
+
+            let receiving_task = runtime.spawn(async move {
+                let mut counter = 0;
+                while let Ok(message) = receiver.recv_async().await {
+                    println!("R: received {message}");
+                    counter += 1;
+                    if counter % 7 == 0 {
+                        task_budget.replenish(7);
+                    }
+                }
+            });
+
+            sending_task.await;
+            receiving_task.await;
+        };
+
+        let result = run_with_budget(task, budget).wait_until_complete();
+        assert_eq!(result.balance.get(), 15 * 7 - 100);
     }
 }
 
@@ -125,7 +164,7 @@ mod asynchronous {
 
     use crate::{
         asynchronous::{run_with_budget, Progress},
-        spend, ReplenishableBudget,
+        BudgetContext, ReplenishableBudget,
     };
 
     #[tokio::test]
@@ -144,10 +183,10 @@ mod asynchronous {
             }
         });
 
-        let task = async move {
+        let task = |context: BudgetContext<usize>| async move {
             for message in 0..=15 {
                 println!("S: requesting budget");
-                spend(1).await;
+                context.spend(1).await;
                 println!("S: sending {message}");
                 sender.send_async(message).await.unwrap();
                 println!("S: message sent");
@@ -165,18 +204,12 @@ mod asynchronous {
     }
 
     #[tokio::test]
-    #[should_panic]
-    async fn reentrant_panic_async() {
-        drop(run_with_budget(async { run_with_budget(async {}, 0).await }, 0).await);
-    }
-
-    #[tokio::test]
     async fn external_budget() {
         let budget = ReplenishableBudget::default();
-        let future = async move {
+        let future = |context: BudgetContext<ReplenishableBudget>| async move {
             for _ in 0..100 {
                 println!("F> Spend 1");
-                spend(1).await;
+                context.spend(1).await;
             }
             println!("Done");
         };
