@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":[["SpendBudget","Spends `amount` from the curent budget."]]};

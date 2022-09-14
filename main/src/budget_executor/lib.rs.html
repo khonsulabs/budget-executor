@@ -305,6 +305,9 @@
 <span id="299">299</span>
 <span id="300">300</span>
 <span id="301">301</span>
+<span id="302">302</span>
+<span id="303">303</span>
+<span id="304">304</span>
 </pre><pre class="rust"><code><span class="attribute">#![<span class="ident">doc</span> <span class="op">=</span> <span class="macro">include_str!</span>(<span class="string">&quot;.crate-docs.md&quot;</span>)]</span>
 <span class="attribute">#![<span class="ident">warn</span>(
     <span class="ident">clippy::cargo</span>,
@@ -321,33 +324,50 @@
 
 <span class="kw">use</span> <span class="ident">std</span>::{
     <span class="ident">cell::RefCell</span>,
-    <span class="ident">future::Future</span>,
-    <span class="ident">pin::Pin</span>,
+    <span class="ident">marker::PhantomData</span>,
     <span class="ident">rc::Rc</span>,
     <span class="ident">sync</span>::{
         <span class="ident">atomic</span>::{<span class="ident">AtomicUsize</span>, <span class="ident">Ordering</span>},
         <span class="ident">Arc</span>, <span class="ident">Mutex</span>,
     },
-    <span class="ident">task</span>::{<span class="ident">Context</span>, <span class="ident">Poll</span>, <span class="ident">Waker</span>},
+    <span class="ident">task::Waker</span>,
 };
 
-<span class="kw">use</span> <span class="ident"><span class="kw">crate</span>::sealed::BudgetableSealed</span>;
+<span class="kw">use</span> <span class="kw">crate</span>::{<span class="ident">sealed::BudgetableSealed</span>, <span class="ident">spend::SpendBudget</span>};
 
 <span class="doccomment">/// A budget implementation compatible with any async executor.</span>
 <span class="kw">pub</span> <span class="kw">mod</span> <span class="ident">asynchronous</span>;
 <span class="doccomment">/// A standalone implementation does not require another async executor and</span>
 <span class="doccomment">/// blocks the current thread while executing.</span>
 <span class="kw">pub</span> <span class="kw">mod</span> <span class="ident">blocking</span>;
+<span class="doccomment">/// Shared implementation of budget spending.</span>
+<span class="kw">pub</span> <span class="kw">mod</span> <span class="ident">spend</span>;
 
-<span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>, <span class="ident">Clone</span>)]</span>
-<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">BudgetContext</span><span class="op">&lt;</span><span class="ident">Budget</span><span class="op">&gt;</span> {
-    <span class="ident">data</span>: <span class="ident">Rc</span><span class="op">&lt;</span><span class="ident">BudgetContextData</span><span class="op">&lt;</span><span class="ident">Budget</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+<span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>)]</span>
+<span class="kw">struct</span> <span class="ident">BudgetContext</span><span class="op">&lt;</span><span class="ident">Backing</span>, <span class="ident">Budget</span><span class="op">&gt;</span>
+<span class="kw">where</span>
+    <span class="ident">Backing</span>: <span class="ident">Container</span><span class="op">&lt;</span><span class="ident">BudgetContextData</span><span class="op">&lt;</span><span class="ident">Budget</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+{
+    <span class="ident">data</span>: <span class="ident">Backing</span>,
+    <span class="ident">_budget</span>: <span class="ident">PhantomData</span><span class="op">&lt;</span><span class="ident">Budget</span><span class="op">&gt;</span>,
+}
+
+<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Backing</span>, <span class="ident">Budget</span><span class="op">&gt;</span> <span class="ident">Clone</span> <span class="kw">for</span> <span class="ident">BudgetContext</span><span class="op">&lt;</span><span class="ident">Backing</span>, <span class="ident">Budget</span><span class="op">&gt;</span>
+<span class="kw">where</span>
+    <span class="ident">Backing</span>: <span class="ident">Container</span><span class="op">&lt;</span><span class="ident">BudgetContextData</span><span class="op">&lt;</span><span class="ident">Budget</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+{
+    <span class="kw">fn</span> <span class="ident">clone</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self</span> {
+        <span class="self">Self</span> {
+            <span class="ident">data</span>: <span class="self">self</span>.<span class="ident">data</span>.<span class="ident">cloned</span>(),
+            <span class="ident">_budget</span>: <span class="ident">PhantomData</span>,
+        }
+    }
 }
 
 <span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>)]</span>
 <span class="kw">struct</span> <span class="ident">BudgetContextData</span><span class="op">&lt;</span><span class="ident">Budget</span><span class="op">&gt;</span> {
-    <span class="ident">budget</span>: <span class="ident">RefCell</span><span class="op">&lt;</span><span class="ident">Budget</span><span class="op">&gt;</span>,
-    <span class="ident">future_waker</span>: <span class="ident">RefCell</span><span class="op">&lt;</span><span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Waker</span><span class="op">&gt;</span><span class="op">&gt;</span>,
+    <span class="ident">budget</span>: <span class="ident">Budget</span>,
+    <span class="ident">future_waker</span>: <span class="prelude-ty">Option</span><span class="op">&lt;</span><span class="ident">Waker</span><span class="op">&gt;</span>,
 }
 
 <span class="doccomment">/// The result of a completed future.</span>
@@ -359,58 +379,18 @@
     <span class="kw">pub</span> <span class="ident">balance</span>: <span class="ident">Budget</span>,
 }
 
-<span class="doccomment">/// Spends `amount` from the curent budget.</span>
-<span class="doccomment">///</span>
-<span class="doccomment">/// This is a future that must be awaited. This future is created by `spend()`.</span>
-<span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>)]</span>
-<span class="attribute">#[<span class="ident">must_use</span> <span class="op">=</span> <span class="string">&quot;budget is not spent until this future is awaited&quot;</span>]</span>
-<span class="kw">pub</span> <span class="kw">struct</span> <span class="ident">SpendBudget</span><span class="op">&lt;</span><span class="lifetime">&#39;a</span>, <span class="ident">Budget</span><span class="op">&gt;</span> {
-    <span class="ident">context</span>: <span class="kw-2">&amp;</span><span class="lifetime">&#39;a</span> <span class="ident">BudgetContext</span><span class="op">&lt;</span><span class="ident">Budget</span><span class="op">&gt;</span>,
-    <span class="ident">amount</span>: <span class="ident">usize</span>,
-}
-
-<span class="kw">impl</span><span class="op">&lt;</span><span class="lifetime">&#39;a</span>, <span class="ident">Budget</span><span class="op">&gt;</span> <span class="ident">Future</span> <span class="kw">for</span> <span class="ident">SpendBudget</span><span class="op">&lt;</span><span class="lifetime">&#39;a</span>, <span class="ident">Budget</span><span class="op">&gt;</span>
+<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Backing</span>, <span class="ident">Budget</span><span class="op">&gt;</span> <span class="ident">BudgetContext</span><span class="op">&lt;</span><span class="ident">Backing</span>, <span class="ident">Budget</span><span class="op">&gt;</span>
 <span class="kw">where</span>
     <span class="ident">Budget</span>: <span class="ident">Budgetable</span>,
-{
-    <span class="kw">type</span> <span class="ident">Output</span> <span class="op">=</span> ();
-
-    <span class="kw">fn</span> <span class="ident">poll</span>(<span class="self">self</span>: <span class="ident">Pin</span><span class="op">&lt;</span><span class="kw-2">&amp;mut</span> <span class="self">Self</span><span class="op">&gt;</span>, <span class="ident">cx</span>: <span class="kw-2">&amp;mut</span> <span class="ident">Context</span><span class="op">&lt;</span><span class="lifetime">&#39;_</span><span class="op">&gt;</span>) -&gt; <span class="ident">Poll</span><span class="op">&lt;</span><span class="ident"><span class="self">Self</span>::Output</span><span class="op">&gt;</span> {
-        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">budget</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">context</span>.<span class="ident">data</span>.<span class="ident">budget</span>.<span class="ident">borrow_mut</span>();
-        <span class="kw">if</span> <span class="ident">budget</span>.<span class="ident">spend</span>(<span class="self">self</span>.<span class="ident">amount</span>) {
-            <span class="ident">budget</span>.<span class="ident">remove_waker</span>(<span class="ident">cx</span>.<span class="ident">waker</span>());
-            <span class="ident">Poll::Ready</span>(())
-        } <span class="kw">else</span> {
-            <span class="comment">// Not enough budget</span>
-
-            <span class="kw">match</span> <span class="kw-2">&amp;mut</span> <span class="kw-2">*</span><span class="self">self</span>.<span class="ident">context</span>.<span class="ident">data</span>.<span class="ident">future_waker</span>.<span class="ident">borrow_mut</span>() {
-                <span class="prelude-val">Some</span>(<span class="ident">existing_waker</span>) <span class="kw">if</span> <span class="ident">existing_waker</span>.<span class="ident">will_wake</span>(<span class="ident">cx</span>.<span class="ident">waker</span>()) =&gt; {
-                    <span class="kw-2">*</span><span class="ident">existing_waker</span> <span class="op">=</span> <span class="ident">cx</span>.<span class="ident">waker</span>().<span class="ident">clone</span>();
-                }
-                <span class="ident">waker</span> =&gt; {
-                    <span class="kw-2">*</span><span class="ident">waker</span> <span class="op">=</span> <span class="prelude-val">Some</span>(<span class="ident">cx</span>.<span class="ident">waker</span>().<span class="ident">clone</span>());
-                }
-            }
-
-            <span class="ident">budget</span>.<span class="ident">add_waker</span>(<span class="ident">cx</span>.<span class="ident">waker</span>());
-
-            <span class="ident">Poll::Pending</span>
-        }
-    }
-}
-
-<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">Budget</span><span class="op">&gt;</span> <span class="ident">BudgetContext</span><span class="op">&lt;</span><span class="ident">Budget</span><span class="op">&gt;</span>
-<span class="kw">where</span>
-    <span class="ident">Budget</span>: <span class="ident">Budgetable</span>,
+    <span class="ident">Backing</span>: <span class="ident">Container</span><span class="op">&lt;</span><span class="ident">BudgetContextData</span><span class="op">&lt;</span><span class="ident">Budget</span><span class="op">&gt;</span><span class="op">&gt;</span>,
 {
     <span class="doccomment">/// Retrieves the current budget.</span>
     <span class="doccomment">///</span>
     <span class="doccomment">/// This function should only be called by code that is guaranteed to be running</span>
     <span class="doccomment">/// by this executor. When called outside of code run by this executor, this function will.</span>
     <span class="attribute">#[<span class="ident">must_use</span>]</span>
-    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">budget</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">usize</span> {
-        <span class="kw">let</span> <span class="ident">budget</span> <span class="op">=</span> <span class="self">self</span>.<span class="ident">data</span>.<span class="ident">budget</span>.<span class="ident">borrow</span>();
-        (<span class="kw-2">&amp;</span><span class="kw-2">*</span><span class="ident">budget</span>).<span class="ident">get</span>()
+    <span class="kw">fn</span> <span class="ident">budget</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">usize</span> {
+        <span class="self">self</span>.<span class="ident">data</span>.<span class="ident">map_locked</span>(<span class="op">|</span><span class="ident">data</span><span class="op">|</span> <span class="ident">data</span>.<span class="ident">budget</span>.<span class="ident">get</span>())
     }
 
     <span class="doccomment">/// Spends `amount` from the curent budget.</span>
@@ -427,53 +407,13 @@
     <span class="doccomment">///     // The budget was spent, proceed with the operation.</span>
     <span class="doccomment">/// }</span>
     <span class="doccomment">/// ```</span>
-    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">spend</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">amount</span>: <span class="ident">usize</span>) -&gt; <span class="ident">SpendBudget</span><span class="op">&lt;</span><span class="lifetime">&#39;_</span>, <span class="ident">Budget</span><span class="op">&gt;</span> {
+    <span class="kw">fn</span> <span class="ident">spend</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">amount</span>: <span class="ident">usize</span>) -&gt; <span class="ident">SpendBudget</span><span class="op">&lt;</span><span class="lifetime">&#39;_</span>, <span class="ident">Backing</span>, <span class="ident">Budget</span><span class="op">&gt;</span> {
         <span class="ident">SpendBudget</span> {
             <span class="ident">context</span>: <span class="self">self</span>,
             <span class="ident">amount</span>,
         }
     }
 }
-
-<span class="comment">// #[must_use]</span>
-<span class="comment">// struct BudgetGuard {</span>
-<span class="comment">//     needs_reset: bool,</span>
-<span class="comment">// }</span>
-
-<span class="comment">// fn set_budget(new_budget: Box&lt;dyn AnyBudget&gt;) -&gt; BudgetGuard {</span>
-<span class="comment">//     BUDGET.with(|budget| {</span>
-<span class="comment">//         let mut budget = budget.borrow_mut();</span>
-
-<span class="comment">//         assert!(</span>
-<span class="comment">//             (&amp;*budget).is_none(),</span>
-<span class="comment">//             &quot;blocking-executor is not able to be nested&quot;</span>
-<span class="comment">//         );</span>
-<span class="comment">//         *budget = Some(new_budget);</span>
-<span class="comment">//     });</span>
-<span class="comment">//     BudgetGuard { needs_reset: true }</span>
-<span class="comment">// }</span>
-
-<span class="comment">// impl BudgetGuard {</span>
-<span class="comment">//     pub fn take_budget(mut self) -&gt; Box&lt;dyn AnyBudget&gt; {</span>
-<span class="comment">//         self.needs_reset = false;</span>
-
-<span class="comment">//         BUDGET.with(RefCell::take).expect(&quot;should still be present&quot;)</span>
-<span class="comment">//         // boxed_budget</span>
-<span class="comment">//         //     .as_any_mut()</span>
-<span class="comment">//         //     .downcast_mut::&lt;Option&lt;Budget&gt;&gt;()</span>
-<span class="comment">//         //     .expect(&quot;types should match&quot;)</span>
-<span class="comment">//         //     .take()</span>
-<span class="comment">//         //     .expect(&quot;should always be Some&quot;)</span>
-<span class="comment">//     }</span>
-<span class="comment">// }</span>
-
-<span class="comment">// impl Drop for BudgetGuard {</span>
-<span class="comment">//     fn drop(&amp;mut self) {</span>
-<span class="comment">//         if self.needs_reset {</span>
-<span class="comment">//             BUDGET.with(RefCell::take);</span>
-<span class="comment">//         }</span>
-<span class="comment">//     }</span>
-<span class="comment">// }</span>
 
 <span class="doccomment">/// A type that can be used as a budget.</span>
 <span class="doccomment">///</span>
@@ -536,6 +476,12 @@
         <span class="kw">for</span> <span class="ident">waker</span> <span class="kw">in</span> <span class="ident">waker</span>.<span class="ident">drain</span>(..) {
             <span class="ident">waker</span>.<span class="ident">wake</span>();
         }
+    }
+
+    <span class="doccomment">/// Returns the remaining budget.</span>
+    <span class="attribute">#[<span class="ident">must_use</span>]</span>
+    <span class="kw">pub</span> <span class="kw">fn</span> <span class="ident">remaining</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">usize</span> {
+        <span class="self">self</span>.<span class="ident">data</span>.<span class="ident">budget</span>.<span class="ident">load</span>(<span class="ident">Ordering::Acquire</span>)
     }
 }
 
@@ -601,6 +547,66 @@
         {
             <span class="ident">stored_waker</span>.<span class="ident">remove</span>(<span class="ident">index</span>);
         }
+    }
+}
+
+<span class="kw">trait</span> <span class="ident">Container</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span>: <span class="ident">Unpin</span> <span class="op">+</span> <span class="lifetime">&#39;static</span> {
+    <span class="kw">fn</span> <span class="ident">new</span>(<span class="ident">contained</span>: <span class="ident">T</span>) -&gt; <span class="self">Self</span>;
+    <span class="kw">fn</span> <span class="ident">cloned</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self</span>;
+    <span class="kw">fn</span> <span class="ident">map_locked</span><span class="op">&lt;</span><span class="ident">R</span>, <span class="ident">F</span>: <span class="ident">FnOnce</span>(<span class="kw-2">&amp;mut</span> <span class="ident">T</span>) -&gt; <span class="ident">R</span><span class="op">&gt;</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">map</span>: <span class="ident">F</span>) -&gt; <span class="ident">R</span>;
+}
+
+<span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>)]</span>
+<span class="kw">struct</span> <span class="ident">SyncContainer</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span>(<span class="ident">Arc</span><span class="op">&lt;</span><span class="ident">Mutex</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="op">&gt;</span>);
+
+<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span> <span class="ident">Clone</span> <span class="kw">for</span> <span class="ident">SyncContainer</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span> {
+    <span class="kw">fn</span> <span class="ident">clone</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self</span> {
+        <span class="self">Self</span>(<span class="self">self</span>.<span class="number">0</span>.<span class="ident">clone</span>())
+    }
+}
+
+<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span> <span class="ident">Container</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span> <span class="kw">for</span> <span class="ident">SyncContainer</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span>
+<span class="kw">where</span>
+    <span class="ident">T</span>: <span class="lifetime">&#39;static</span>,
+{
+    <span class="kw">fn</span> <span class="ident">map_locked</span><span class="op">&lt;</span><span class="ident">R</span>, <span class="ident">F</span>: <span class="ident">FnOnce</span>(<span class="kw-2">&amp;mut</span> <span class="ident">T</span>) -&gt; <span class="ident">R</span><span class="op">&gt;</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">map</span>: <span class="ident">F</span>) -&gt; <span class="ident">R</span> {
+        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">locked</span> <span class="op">=</span> <span class="self">self</span>.<span class="number">0</span>.<span class="ident">lock</span>().<span class="ident">unwrap</span>();
+        <span class="ident">map</span>(<span class="kw-2">&amp;mut</span> <span class="ident">locked</span>)
+    }
+
+    <span class="kw">fn</span> <span class="ident">cloned</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self</span> {
+        <span class="self">Self</span>(<span class="self">self</span>.<span class="number">0</span>.<span class="ident">clone</span>())
+    }
+
+    <span class="kw">fn</span> <span class="ident">new</span>(<span class="ident">contained</span>: <span class="ident">T</span>) -&gt; <span class="self">Self</span> {
+        <span class="self">Self</span>(<span class="ident">Arc::new</span>(<span class="ident">Mutex::new</span>(<span class="ident">contained</span>)))
+    }
+}
+
+<span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>)]</span>
+<span class="kw">struct</span> <span class="ident">NotSyncContainer</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span>(<span class="ident">Rc</span><span class="op">&lt;</span><span class="ident">RefCell</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span><span class="op">&gt;</span>);
+
+<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span> <span class="ident">Clone</span> <span class="kw">for</span> <span class="ident">NotSyncContainer</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span> {
+    <span class="kw">fn</span> <span class="ident">clone</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self</span> {
+        <span class="self">Self</span>(<span class="self">self</span>.<span class="number">0</span>.<span class="ident">clone</span>())
+    }
+}
+
+<span class="kw">impl</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span> <span class="ident">Container</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span> <span class="kw">for</span> <span class="ident">NotSyncContainer</span><span class="op">&lt;</span><span class="ident">T</span><span class="op">&gt;</span>
+<span class="kw">where</span>
+    <span class="ident">T</span>: <span class="lifetime">&#39;static</span>,
+{
+    <span class="kw">fn</span> <span class="ident">map_locked</span><span class="op">&lt;</span><span class="ident">R</span>, <span class="ident">F</span>: <span class="ident">FnOnce</span>(<span class="kw-2">&amp;mut</span> <span class="ident">T</span>) -&gt; <span class="ident">R</span><span class="op">&gt;</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">map</span>: <span class="ident">F</span>) -&gt; <span class="ident">R</span> {
+        <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">locked</span> <span class="op">=</span> <span class="self">self</span>.<span class="number">0</span>.<span class="ident">borrow_mut</span>();
+        <span class="ident">map</span>(<span class="kw-2">&amp;mut</span> <span class="kw-2">*</span><span class="ident">locked</span>)
+    }
+
+    <span class="kw">fn</span> <span class="ident">cloned</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self</span> {
+        <span class="self">Self</span>(<span class="self">self</span>.<span class="number">0</span>.<span class="ident">clone</span>())
+    }
+
+    <span class="kw">fn</span> <span class="ident">new</span>(<span class="ident">contained</span>: <span class="ident">T</span>) -&gt; <span class="self">Self</span> {
+        <span class="self">Self</span>(<span class="ident">Rc::new</span>(<span class="ident">RefCell::new</span>(<span class="ident">contained</span>)))
     }
 }
 

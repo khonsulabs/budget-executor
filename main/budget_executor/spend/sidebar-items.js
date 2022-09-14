@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":[["singlethreaded","Single-threaded (`!Send + !Sync`) budget spending"],["threadsafe","Threadsafe (`Send + Sync`) budget spending"]]};
