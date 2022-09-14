@@ -26,12 +26,12 @@ thread and one that works with any async runtime.</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use</span> <span class="ident">std::time::Duration</span>;
 
-<span class="kw">use</span> <span class="ident">budget_executor::blocking</span>::{<span class="ident">run_with_budget</span>, <span class="ident">Progress</span>};
+<span class="kw">use</span> <span class="ident">budget_executor::blocking</span>::{<span class="ident">run_with_budget</span>, <span class="ident">Progress</span>, <span class="ident">Runtime</span>};
 
 <span class="kw">fn</span> <span class="ident">main</span>() {
     <span class="comment">// Run a task with no initial budget. The first time the task asks to spend</span>
     <span class="comment">// any budget, it will be paused.</span>
-    <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">progress</span> <span class="op">=</span> <span class="ident">run_with_budget</span>(<span class="ident">some_task_to_limit</span>(), <span class="number">0</span>);
+    <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">progress</span> <span class="op">=</span> <span class="ident">run_with_budget</span>(<span class="ident">some_task_to_limit</span>, <span class="number">0</span>);
 
     <span class="comment">// At this point, the task has run until the first call to</span>
     <span class="comment">// budget_executor::spend. Because we gave an initial_budget of 0, the future</span>
@@ -58,21 +58,26 @@ thread and one that works with any async runtime.</p>
     }
 }
 
-<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">some_task_to_limit</span>() -&gt; <span class="ident">bool</span> {
-    <span class="ident">do_some_operation</span>(<span class="number">1</span>).<span class="kw">await</span>;
-    <span class="ident">do_some_operation</span>(<span class="number">5</span>).<span class="kw">await</span>;
-    <span class="ident">do_some_operation</span>(<span class="number">1</span>).<span class="kw">await</span>;
-    <span class="ident">do_some_operation</span>(<span class="number">25</span>).<span class="kw">await</span>;
+<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">some_task_to_limit</span>(<span class="ident">runtime</span>: <span class="ident">Runtime</span><span class="op">&lt;</span><span class="ident">usize</span><span class="op">&gt;</span>) -&gt; <span class="ident">bool</span> {
+    <span class="ident">do_some_operation</span>(<span class="number">1</span>, <span class="kw-2">&amp;</span><span class="ident">runtime</span>).<span class="kw">await</span>;
+    <span class="ident">do_some_operation</span>(<span class="number">5</span>, <span class="kw-2">&amp;</span><span class="ident">runtime</span>).<span class="kw">await</span>;
+    <span class="ident">do_some_operation</span>(<span class="number">1</span>, <span class="kw-2">&amp;</span><span class="ident">runtime</span>).<span class="kw">await</span>;
+    <span class="ident">do_some_operation</span>(<span class="number">25</span>, <span class="kw-2">&amp;</span><span class="ident">runtime</span>).<span class="kw">await</span>;
     <span class="bool-val">true</span>
 }
 
-<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">do_some_operation</span>(<span class="ident">times</span>: <span class="ident">u8</span>) {
+<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">do_some_operation</span>(<span class="ident">times</span>: <span class="ident">u8</span>, <span class="ident">runtime</span>: <span class="kw-2">&amp;</span><span class="ident">Runtime</span><span class="op">&lt;</span><span class="ident">usize</span><span class="op">&gt;</span>) {
     <span class="macro">println!</span>(<span class="string">&quot;&gt; Asking to spend {times} from the budget&quot;</span>);
-    <span class="ident">budget_executor::spend</span>(<span class="ident">usize::from</span>(<span class="ident">times</span>)).<span class="kw">await</span>;
+    <span class="ident">runtime</span>.<span class="ident">spend</span>(<span class="ident">usize::from</span>(<span class="ident">times</span>)).<span class="kw">await</span>;
 
     <span class="comment">// Despite being async code, because we know we&#39;re running in a</span>
     <span class="comment">// single-threaded environment, we can still call blocking operations.</span>
     <span class="ident">std::thread::sleep</span>(<span class="ident">Duration::from_millis</span>(<span class="ident">u64::from</span>(<span class="ident">times</span>) <span class="op">*</span> <span class="number">100</span>));
+}
+
+<span class="attribute">#[<span class="ident">test</span>]</span>
+<span class="kw">fn</span> <span class="ident">runs</span>() {
+    <span class="ident">main</span>()
 }
 </code></pre></div>
 <p>When run, it produces this output:</p>
@@ -120,13 +125,16 @@ asynchronous implementation.</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use</span> <span class="ident">std::time::Duration</span>;
 
-<span class="kw">use</span> <span class="ident">budget_executor::asynchronous</span>::{<span class="ident">run_with_budget</span>, <span class="ident">Progress</span>};
+<span class="kw">use</span> <span class="ident">budget_executor</span>::{
+    <span class="ident">asynchronous</span>::{<span class="ident">run_with_budget</span>, <span class="ident">Progress</span>},
+    <span class="ident">BudgetContext</span>,
+};
 
 <span class="attribute">#[<span class="ident">tokio::main</span>(<span class="ident">flavor</span> <span class="op">=</span> <span class="string">&quot;current_thread&quot;</span>)]</span>
 <span class="kw">async</span> <span class="kw">fn</span> <span class="ident">main</span>() {
     <span class="comment">// Run a task with no initial budget. The first time the task asks to spend</span>
     <span class="comment">// any budget, it will be paused.</span>
-    <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">progress</span> <span class="op">=</span> <span class="ident">run_with_budget</span>(<span class="ident">some_task_to_limit</span>(), <span class="number">0</span>).<span class="kw">await</span>;
+    <span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">progress</span> <span class="op">=</span> <span class="ident">run_with_budget</span>(<span class="ident">some_task_to_limit</span>, <span class="number">0</span>).<span class="kw">await</span>;
 
     <span class="comment">// At this point, the task has run until the first call to</span>
     <span class="comment">// budget_executor::spend. Because we gave an initial_budget of 0, the future</span>
@@ -153,18 +161,23 @@ asynchronous implementation.</p>
     }
 }
 
-<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">some_task_to_limit</span>() -&gt; <span class="ident">bool</span> {
-    <span class="ident">do_some_operation</span>(<span class="number">1</span>).<span class="kw">await</span>;
-    <span class="ident">do_some_operation</span>(<span class="number">5</span>).<span class="kw">await</span>;
-    <span class="ident">do_some_operation</span>(<span class="number">1</span>).<span class="kw">await</span>;
-    <span class="ident">do_some_operation</span>(<span class="number">25</span>).<span class="kw">await</span>;
+<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">some_task_to_limit</span>(<span class="ident">context</span>: <span class="ident">BudgetContext</span><span class="op">&lt;</span><span class="ident">usize</span><span class="op">&gt;</span>) -&gt; <span class="ident">bool</span> {
+    <span class="ident">do_some_operation</span>(<span class="number">1</span>, <span class="kw-2">&amp;</span><span class="ident">context</span>).<span class="kw">await</span>;
+    <span class="ident">do_some_operation</span>(<span class="number">5</span>, <span class="kw-2">&amp;</span><span class="ident">context</span>).<span class="kw">await</span>;
+    <span class="ident">do_some_operation</span>(<span class="number">1</span>, <span class="kw-2">&amp;</span><span class="ident">context</span>).<span class="kw">await</span>;
+    <span class="ident">do_some_operation</span>(<span class="number">25</span>, <span class="kw-2">&amp;</span><span class="ident">context</span>).<span class="kw">await</span>;
     <span class="bool-val">true</span>
 }
 
-<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">do_some_operation</span>(<span class="ident">times</span>: <span class="ident">u8</span>) {
+<span class="kw">async</span> <span class="kw">fn</span> <span class="ident">do_some_operation</span>(<span class="ident">times</span>: <span class="ident">u8</span>, <span class="ident">context</span>: <span class="kw-2">&amp;</span><span class="ident">BudgetContext</span><span class="op">&lt;</span><span class="ident">usize</span><span class="op">&gt;</span>) {
     <span class="macro">println!</span>(<span class="string">&quot;&gt; Asking to spend {times} from the budget&quot;</span>);
-    <span class="ident">budget_executor::spend</span>(<span class="ident">usize::from</span>(<span class="ident">times</span>)).<span class="kw">await</span>;
+    <span class="ident">context</span>.<span class="ident">spend</span>(<span class="ident">usize::from</span>(<span class="ident">times</span>)).<span class="kw">await</span>;
     <span class="ident">tokio::time::sleep</span>(<span class="ident">Duration::from_millis</span>(<span class="ident">u64::from</span>(<span class="ident">times</span>) <span class="op">*</span> <span class="number">100</span>)).<span class="kw">await</span>;
+}
+
+<span class="attribute">#[<span class="ident">test</span>]</span>
+<span class="kw">fn</span> <span class="ident">runs</span>() {
+    <span class="ident">main</span>()
 }
 </code></pre></div>
 <p>When run, it produces the same output as displayed in the blocking section.</p>
