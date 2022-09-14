@@ -74,29 +74,11 @@ where
     Budget: Budgetable,
     Backing: Container<BudgetContextData<Budget>>,
 {
-    /// Retrieves the current budget.
-    ///
-    /// This function should only be called by code that is guaranteed to be running
-    /// by this executor. When called outside of code run by this executor, this function will.
     #[must_use]
     fn budget(&self) -> usize {
         self.data.map_locked(|data| data.budget.get())
     }
 
-    /// Spends `amount` from the curent budget.
-    ///
-    /// This function returns a future which must be awaited.
-    ///
-    /// ```rust
-    /// use budget_executor::spend;
-    ///
-    /// async fn some_task() {
-    ///     // Attempt to spend 5 budget. This will pause the
-    ///     // async task (Future) until enough budget is available.
-    ///     spend(5).await;
-    ///     // The budget was spent, proceed with the operation.
-    /// }
-    /// ```
     fn spend(&self, amount: usize) -> SpendBudget<'_, Backing, Budget> {
         SpendBudget {
             context: self,

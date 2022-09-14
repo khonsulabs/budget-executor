@@ -299,9 +299,9 @@ macro_rules! define_public_interface {
             {
 
                 /// Executes `future` with the provided budget. The future will run until it
-                /// completes or until it has invoked [`spend()`](crate::spend) enough to
+                /// completes or until it has invoked [`spend()`](Self::spend) enough to
                 /// exhaust the budget provided. If the future never called
-                /// [`spend()`](crate::spend), this function will not return until the future
+                /// [`spend()`](Self::spend), this function will not return until the future
                 /// has completed.
                 ///
                 /// This function returns a [`Future`] which must be awaited to execute the
@@ -338,17 +338,6 @@ macro_rules! define_public_interface {
                 /// Spends `amount` from the curent budget.
                 ///
                 /// This function returns a future which must be awaited.
-                ///
-                /// ```rust
-                /// use budget_executor::spend;
-                ///
-                /// async fn some_task() {
-                ///     // Attempt to spend 5 budget. This will pause the
-                ///     // async task (Future) until enough budget is available.
-                ///     spend(5).await;
-                ///     // The budget was spent, proceed with the operation.
-                /// }
-                /// ```
                 pub fn spend(&self, amount: usize) -> SpendBudget<'_, Budget> {
                     // How do we re-export SpendBudget since it's sahrd with async too. crate-level module?
                     SpendBudget::from(self.0.spend(amount))
