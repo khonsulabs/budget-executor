@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["budget_executor"] = [{"text":"impl&lt;Budget&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/1.63.0/core/ops/deref/trait.Deref.html\" title=\"trait core::ops::deref::Deref\">Deref</a> for <a class=\"struct\" href=\"budget_executor/blocking/struct.Runtime.html\" title=\"struct budget_executor::blocking::Runtime\">Runtime</a>&lt;Budget&gt;","synthetic":false,"types":["budget_executor::blocking::Runtime"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
