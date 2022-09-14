@@ -36,14 +36,14 @@ Configuration(
                 release: "https://github.com/khonsulabs/budget-executor/blob/v0.0.0",
             ),
             "blocking-run": (
-                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/fn.run_with_budget.html",
-                release: "https://docs.rs/budget-executor/*/budget_executor/blocking/fn.run_with_budget.html",
-                for_docs: "blocking::run_with_budget",
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/singlethreaded/struct.Runtime.html#method.run_with_budget",
+                release: "https://docs.rs/budget-executor/*/budget_executor/blocking/singlethreaded/struct.Runtime.html#method.run_with_budget",
+                for_docs: "blocking::singlethreaded::Runtime::run_with_budget",
             ),
             "async-run": (
-                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/fn.run_with_budget.html",
-                release: "https://docs.rs/budget-executor/*/budget_executor/asynchronous/fn.run_with_budget.html",
-                for_docs: "asynchronous::run_with_budget",
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/singlethreaded/struct.Context.html#method.run_with_budget",
+                release: "https://docs.rs/budget-executor/*/budget_executor/asynchronous/singlethreaded/struct.Context.html#method.run_with_budget",
+                for_docs: "asynchronous::singlethreaded::Context::run_with_budget",
             ),
             "spend": (
                 default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/fn.spend.html",
@@ -56,24 +56,34 @@ Configuration(
                 for_docs: "spend",
             ),
             "blocking-continue": (
-                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/struct.IncompleteFuture.html#method.continue_with_additional_budget",
-                release: "https://docs.rs/budget-executor/*/budget_executor/blocking/struct.IncompleteFuture.html#method.continue_with_additional_budget",
-                for_docs: "blocking::IncompleteFuture::continue_with_additional_budget",
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/singlethreaded/struct.IncompleteFuture.html#method.continue_with_additional_budget",
+                release: "https://docs.rs/budget-executor/*/budget_executor/blocking/singlethreaded/struct.IncompleteFuture.html#method.continue_with_additional_budget",
+                for_docs: "blocking::singlethreaded::IncompleteFuture::continue_with_additional_budget",
             ),
             "async-continue": (
-                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/struct.IncompleteFuture.html#method.continue_with_additional_budget",
-                release: "https://docs.rs/budget-executor/*/budget_executor/asynchronous/struct.IncompleteFuture.html#method.continue_with_additional_budget",
-                for_docs: "blocking::IncompleteFuture::continue_with_additional_budget",
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/singlethreaded/struct.IncompleteFuture.html#method.continue_with_additional_budget",
+                release: "https://docs.rs/budget-executor/*/budget_executor/asynchronous/singlethreaded/struct.IncompleteFuture.html#method.continue_with_additional_budget",
+                for_docs: "asynchronous::singlethreaded::IncompleteFuture::continue_with_additional_budget",
             ),
-            "async": (
-                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/index.html",
-                release: "https://docs.rs/budget-executor/*/budget_executor/asynchronous/index.html",
-                for_docs: "asynchronous",
+            "asynchronous-singlethreaded": (
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/singlethreaded/index.html",
+                release: "https://docs.rs/budget-executor/*/budget_executor/asynchronous/singlethreaded/index.html",
+                for_docs: "asynchronous::singlethreaded",
             ),
-            "blocking": (
-                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/index.html",
-                release: "https://docs.rs/budget-executor/*/budget_executor/blocking/index.html",
-                for_docs: "blocking",
+            "blocking-singlethreaded": (
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/singlethreaded/index.html",
+                release: "https://docs.rs/budget-executor/*/budget_executor/blocking/singlethreaded/index.html",
+                for_docs: "blocking::singlethreaded",
+            ),
+            "asynchronous-threadsafe": (
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/threadsafe/index.html",
+                release: "https://docs.rs/budget-executor/*/budget_executor/asynchronous/threadsafe/index.html",
+                for_docs: "asynchronous::threadsafe",
+            ),
+            "blocking-threadsafe": (
+                default: "https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/threadsafe/index.html",
+                release: "https://docs.rs/budget-executor/*/budget_executor/blocking/threadsafe/index.html",
+                for_docs: "blocking::threadsafe",
             ),
         }
     ],

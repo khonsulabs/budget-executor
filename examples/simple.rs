@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-use budget_executor::blocking::{run_with_budget, Progress, Runtime};
+use budget_executor::blocking::singlethreaded::{Progress, Runtime};
 
 fn main() {
     // Run a task with no initial budget. The first time the task asks to spend
     // any budget, it will be paused.
-    let mut progress = run_with_budget(some_task_to_limit, 0);
+    let mut progress = Runtime::run_with_budget(some_task_to_limit, 0);
 
     // At this point, the task has run until the first call to
     // budget_executor::spend. Because we gave an initial_budget of 0, the future

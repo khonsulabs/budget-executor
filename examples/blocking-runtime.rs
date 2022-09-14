@@ -1,9 +1,6 @@
 use std::time::Duration;
 
-use budget_executor::{
-    blocking::{run_with_budget, Runtime},
-    ReplenishableBudget,
-};
+use budget_executor::{blocking::threadsafe::Runtime, ReplenishableBudget};
 
 const THREADS: usize = 10;
 const TASKS_PER_THREAD: usize = 10;
@@ -32,7 +29,7 @@ fn main() {
 }
 
 fn worker(worker_id: usize, shared_budget: ReplenishableBudget) {
-    run_with_budget(
+    Runtime::run_with_budget(
         |runtime| async move { some_task_to_limit(worker_id, runtime).await },
         shared_budget,
     )

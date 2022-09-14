@@ -18,22 +18,40 @@ loops or too-intensive scripts slowing down a server. The interpreter can assign
 different costs to various operations.
 
 This crate has two implementations of this approach: one that blocks the current
-thread and one that works with any async runtime.
+thread and one that works with any async runtime. Additionally, there are
+`threadsafe` (`Send + Sync`) and `singlethreaded` variations:
+
+| Async? | `Send + Sync`? | Module                                                          |
+|--------|----------------|-----------------------------------------------------------------|
+| no     | no             | [`blocking::singlethreaded`](https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/singlethreaded/index.html)             |
+| no     | yes            | [`blocking::threadsafe`](https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/threadsafe/index.html)                 |
+| yes    | no             | [`asynchronous::singlethreaded`](https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/singlethreaded/index.html) |
+| yes    | yes            | [`asynchronous::threadsafe`](https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/threadsafe/index.html)         |
+
+The APIs are identically designed between the modules. The notable changes
+between the modules are:
+
+- For async, functions that execute the future are implemented as futures. This
+  means, for example, `run_with_budget()` must be `.await`ed for anything to
+  happen.
+- For `Send + Sync`, the backing type is changed from `Rc<RefCell<T>>` to
+  `Arc<Mutex<T>>`. This is transparent to the public API, but the expected
+  performance differences will apply.
 
 ## Using from non-async code (Blocking)
 
-This example of the [blocking](https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/index.html) implementation is from
-`examples/simple.rs` in the repository:
+This example of the [blocking, single-threaded](https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/singlethreaded/index.html) implementation is
+from `examples/simple.rs` in the repository:
 
 ```rust
 use std::time::Duration;
 
-use budget_executor::blocking::{run_with_budget, Progress, Runtime};
+use budget_executor::blocking::singlethreaded::{Progress, Runtime};
 
 fn main() {
     // Run a task with no initial budget. The first time the task asks to spend
     // any budget, it will be paused.
-    let mut progress = run_with_budget(some_task_to_limit, 0);
+    let mut progress = Runtime::run_with_budget(some_task_to_limit, 0);
 
     // At this point, the task has run until the first call to
     // budget_executor::spend. Because we gave an initial_budget of 0, the future
@@ -107,7 +125,7 @@ Task completed with balance: Remaining(3), output: true
 
 ### How does this work?
 
-At the start of the example, [run_with_budget()](https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/fn.run_with_budget.html) is called with
+At the start of the example, [run_with_budget()](https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/singlethreaded/struct.Runtime.html#method.run_with_budget) is called with
 an initial balance of 0. This will cause the future (`some_task_to_limit()`) to
 execute until it executes [`spend(amount).await`](https://khonsulabs.github.io/budget-executor/main/budget_executor/fn.spend.html). When the future
 attempts to spend any budget, because the initial balance was 0, the future will
@@ -116,7 +134,7 @@ be paused until budget made available. `run_with_budget()` returns
 
 The example now loops until `progress` contains `Progress::Complete`. When
 `Progress::NoBudget` is returned instead, the task is resumed using
-[`continue_with_additional_budget()`](https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/struct.IncompleteFuture.html#method.continue_with_additional_budget). This resumes
+[`continue_with_additional_budget()`](https://khonsulabs.github.io/budget-executor/main/budget_executor/blocking/singlethreaded/struct.IncompleteFuture.html#method.continue_with_additional_budget). This resumes
 executing the future, which will re-awaken inside of `spend().await`. The budget
 will be checked again. If there is enough budget, `spend().await` will deduct
 the spent amount and return. If there isn't enough budget, the future will pause again and `continue_with_additional_budget` returns `Progress::NoBudget`.
@@ -137,21 +155,19 @@ asynchronous implementation.
 
 ## Using from async code
 
-This example is `examples/simple-async.rs` in the repository:
+This example of the [asynchronous, single-threaded](https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/singlethreaded/index.html) implementation
+is `examples/simple-async.rs` in the repository:
 
 ```rust
 use std::time::Duration;
 
-use budget_executor::{
-    asynchronous::{run_with_budget, Progress},
-    BudgetContext,
-};
+use budget_executor::asynchronous::singlethreaded::{Context, Progress};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     // Run a task with no initial budget. The first time the task asks to spend
     // any budget, it will be paused.
-    let mut progress = run_with_budget(some_task_to_limit, 0).await;
+    let mut progress = Context::run_with_budget(some_task_to_limit, 0).await;
 
     // At this point, the task has run until the first call to
     // budget_executor::spend. Because we gave an initial_budget of 0, the future
@@ -178,7 +194,7 @@ async fn main() {
     }
 }
 
-async fn some_task_to_limit(context: BudgetContext<usize>) -> bool {
+async fn some_task_to_limit(context: Context<usize>) -> bool {
     do_some_operation(1, &context).await;
     do_some_operation(5, &context).await;
     do_some_operation(1, &context).await;
@@ -186,7 +202,7 @@ async fn some_task_to_limit(context: BudgetContext<usize>) -> bool {
     true
 }
 
-async fn do_some_operation(times: u8, context: &BudgetContext<usize>) {
+async fn do_some_operation(times: u8, context: &Context<usize>) {
     println!("> Asking to spend {times} from the budget");
     context.spend(usize::from(times)).await;
     tokio::time::sleep(Duration::from_millis(u64::from(times) * 100)).await;
@@ -204,8 +220,9 @@ When run, it produces the same output as displayed in the blocking section.
 ### How does this work?
 
 This example is identical to the blocking example, but instead uses the
-[`asynchronous`](https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/index.html) module's APIs: [`run_with_budget().await`](https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/fn.run_with_budget.html)
-and [`continue_with_additional_budget().await`](https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/struct.IncompleteFuture.html#method.continue_with_additional_budget).
+[`asynchronous`](https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/singlethreaded/index.html) module's APIs:
+[`run_with_budget().await`](https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/singlethreaded/struct.Context.html#method.run_with_budget) and
+[`continue_with_additional_budget().await`](https://khonsulabs.github.io/budget-executor/main/budget_executor/asynchronous/singlethreaded/struct.IncompleteFuture.html#method.continue_with_additional_budget).
 
 This implementation is runtime agnostic and is actively tested against tokio.
 

@@ -1,38 +1,27 @@
 use std::{
-    cell::RefCell,
     future::Future,
     marker::PhantomData,
     pin::Pin,
-    rc::Rc,
     task::{Context, Poll, Waker},
 };
 
-use crate::{BudgetContext, BudgetContextData, BudgetResult, Budgetable, ReplenishableBudget};
+use crate::{BudgetContext, BudgetContextData, BudgetResult, Budgetable, Container};
 
-/// Executes `future` with the provided budget. The future will run until it
-/// completes or until it has invoked [`spend()`](crate::spend) enough to
-/// exhaust the budget provided. If the future never called
-/// [`spend()`](crate::spend), this function will not return until the future
-/// has completed.
-///
-/// This function returns a [`Future`] which must be awaited to execute the
-/// function.
-///
-/// This implementation is runtime agnostic.
-///
-/// # Panics
-///
-/// Panics when called within from within `future` or any code invoked by
-/// `future`.
-pub fn run_with_budget<Budget: Budgetable, F: Future>(
-    future: impl FnOnce(BudgetContext<Budget>) -> F,
+fn run_with_budget<Budget, Backing, F>(
+    future: impl FnOnce(BudgetContext<Backing, Budget>) -> F,
     initial_budget: Budget,
-) -> BudgetedFuture<Budget, F> {
+) -> BudgetedFuture<Budget, Backing, F>
+where
+    Budget: Budgetable,
+    Backing: Container<BudgetContextData<Budget>>,
+    F: Future,
+{
     let context = BudgetContext {
-        data: Rc::new(BudgetContextData {
-            budget: RefCell::new(initial_budget),
-            future_waker: RefCell::new(None),
+        data: Backing::new(BudgetContextData {
+            budget: initial_budget,
+            future_waker: None,
         }),
+        _budget: PhantomData,
     };
     BudgetedFuture {
         state: Some(BudgetedFutureState {
@@ -47,22 +36,29 @@ pub fn run_with_budget<Budget: Budgetable, F: Future>(
 ///
 /// This future is returned from [`run_with_budget()`].
 #[must_use = "the future must be awaited to be executed"]
-pub struct BudgetedFuture<Budget, F> {
-    state: Option<BudgetedFutureState<Budget, F>>,
+struct BudgetedFuture<Budget, Backing, F>
+where
+    Backing: Container<BudgetContextData<Budget>>,
+{
+    state: Option<BudgetedFutureState<Budget, Backing, F>>,
 }
 
-struct BudgetedFutureState<Budget, F> {
+struct BudgetedFutureState<Budget, Backing, F>
+where
+    Backing: Container<BudgetContextData<Budget>>,
+{
     future: Pin<Box<F>>,
-    context: BudgetContext<Budget>,
+    context: BudgetContext<Backing, Budget>,
     _budget: PhantomData<Budget>,
 }
 
-impl<Budget, F> Future for BudgetedFuture<Budget, F>
+impl<Budget, Backing, F> Future for BudgetedFuture<Budget, Backing, F>
 where
     F: Future,
     Budget: Budgetable,
+    Backing: Container<BudgetContextData<Budget>>,
 {
-    type Output = Progress<Budget, F>;
+    type Output = Progress<Budget, Backing, F>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let state = self
@@ -83,24 +79,32 @@ where
     }
 }
 
-enum BudgetPoll<Budget, F>
+enum BudgetPoll<Budget, Backing, F>
 where
     F: Future,
     Budget: Budgetable,
+    Backing: Container<BudgetContextData<Budget>>,
 {
-    Ready(Progress<Budget, F>),
+    Ready(Progress<Budget, Backing, F>),
     Pending {
         future: Pin<Box<F>>,
-        context: BudgetContext<Budget>,
+        context: BudgetContext<Backing, Budget>,
     },
 }
 
-fn poll_async_future_with_budget<Budget: Budgetable, F: Future>(
+fn poll_async_future_with_budget<Budget, Backing, F>(
     mut future: Pin<Box<F>>,
     cx: &mut Context<'_>,
-    budget_context: BudgetContext<Budget>,
-) -> BudgetPoll<Budget, F> {
-    *budget_context.data.future_waker.borrow_mut() = None;
+    budget_context: BudgetContext<Backing, Budget>,
+) -> BudgetPoll<Budget, Backing, F>
+where
+    Budget: Budgetable,
+    F: Future,
+    Backing: Container<BudgetContextData<Budget>>,
+{
+    budget_context.data.map_locked(|data| {
+        data.future_waker = None;
+    });
 
     let pinned_future = Pin::new(&mut future);
     let future_result = pinned_future.poll(cx);
@@ -108,12 +112,14 @@ fn poll_async_future_with_budget<Budget: Budgetable, F: Future>(
     match future_result {
         Poll::Ready(output) => BudgetPoll::Ready(Progress::Complete(BudgetResult {
             output,
-            balance: budget_context.data.budget.borrow().clone(),
+            balance: budget_context.data.map_locked(|data| data.budget.clone()),
         })),
         Poll::Pending => {
-            let waker = budget_context.data.future_waker.take();
+            let waker = budget_context
+                .data
+                .map_locked(|data| data.future_waker.take());
             if let Some(waker) = waker {
-                BudgetPoll::Ready(Progress::NoBudget(IncompleteAsyncFuture {
+                BudgetPoll::Ready(Progress::NoBudget(IncompleteFuture {
                     future,
                     waker,
                     context: budget_context,
@@ -129,29 +135,36 @@ fn poll_async_future_with_budget<Budget: Budgetable, F: Future>(
 }
 
 /// The progress of a future's execution.
-pub enum Progress<Budget: Budgetable, F: Future> {
+enum Progress<Budget, Backing, F>
+where
+    Budget: Budgetable,
+    F: Future,
+    Backing: Container<BudgetContextData<Budget>>,
+{
     /// The future was interrupted because it requested to spend more budget
     /// than was available.
-    NoBudget(IncompleteAsyncFuture<Budget, F>),
+    NoBudget(IncompleteFuture<Budget, Backing, F>),
     /// The future has completed.
     Complete(BudgetResult<F::Output, Budget>),
 }
 
 /// A future that was budgeted using [`run_with_budget()`] that has
 /// not yet completed.
-pub struct IncompleteAsyncFuture<Budget, F>
+struct IncompleteFuture<Budget, Backing, F>
 where
     F: Future,
+    Backing: Container<BudgetContextData<Budget>>,
 {
     future: Pin<Box<F>>,
     waker: Waker,
-    context: BudgetContext<Budget>,
+    context: BudgetContext<Backing, Budget>,
 }
 
-impl<Budget, F> IncompleteAsyncFuture<Budget, F>
+impl<Budget, Backing, F> IncompleteFuture<Budget, Backing, F>
 where
     F: Future,
     Budget: Budgetable,
+    Backing: Container<BudgetContextData<Budget>>,
 {
     /// Adds `additional_budget` to the remaining balance and continues
     /// executing the future.
@@ -160,7 +173,7 @@ where
     pub fn continue_with_additional_budget(
         self,
         additional_budget: usize,
-    ) -> BudgetedFuture<Budget, F> {
+    ) -> BudgetedFuture<Budget, Backing, F> {
         let Self {
             future,
             waker,
@@ -170,9 +183,7 @@ where
         waker.wake();
         context
             .data
-            .budget
-            .borrow_mut()
-            .replenish(additional_budget);
+            .map_locked(|data| data.budget.replenish(additional_budget));
 
         BudgetedFuture {
             state: Some(BudgetedFutureState {
@@ -182,15 +193,9 @@ where
             }),
         }
     }
-}
-
-impl<F> IncompleteAsyncFuture<ReplenishableBudget, F>
-where
-    F: Future,
-{
     /// Waits for additional budget to be allocated through
     /// [`ReplenishableBudget::replenish()`].
-    pub fn wait_for_budget(self) -> WaitForBudgetFuture<ReplenishableBudget, F> {
+    pub fn wait_for_budget(self) -> WaitForBudgetFuture<Budget, Backing, F> {
         let Self {
             future,
             waker,
@@ -216,21 +221,23 @@ where
 ///
 /// This must be awaited to be executed.
 #[must_use = "the future must be awaited to be executed"]
-pub struct WaitForBudgetFuture<Budget, F>
+struct WaitForBudgetFuture<Budget, Backing, F>
 where
     F: Future,
+    Backing: Container<BudgetContextData<Budget>>,
 {
     has_returned_pending: bool,
     waker: Option<Waker>,
-    future: BudgetedFuture<Budget, F>,
+    future: BudgetedFuture<Budget, Backing, F>,
 }
 
-impl<Budget, F> Future for WaitForBudgetFuture<Budget, F>
+impl<Budget, Backing, F> Future for WaitForBudgetFuture<Budget, Backing, F>
 where
     F: Future,
     Budget: Budgetable,
+    Backing: Container<BudgetContextData<Budget>>,
 {
-    type Output = Progress<Budget, F>;
+    type Output = Progress<Budget, Backing, F>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         if self.has_returned_pending {
@@ -257,8 +264,224 @@ where
         } else {
             self.has_returned_pending = true;
             let state = self.future.state.as_ref().expect("always present");
-            state.context.data.budget.borrow_mut().add_waker(cx.waker());
+            state
+                .context
+                .data
+                .map_locked(|data| data.budget.add_waker(cx.waker()));
             Poll::Pending
         }
     }
 }
+
+macro_rules! define_public_interface {
+    ($modulename:ident, $backing:ident, $moduledocs:literal) => {
+        #[doc = $moduledocs]
+        pub mod $modulename {
+            use std::{
+                future::Future,
+                pin::Pin,
+                task::{self, Poll},
+            };
+
+            use crate::{BudgetResult, Budgetable, spend::$modulename::SpendBudget};
+
+            type Backing<Budget> = crate::$backing<crate::BudgetContextData<Budget>>;
+            type BudgetContext<Budget> = crate::BudgetContext<Backing<Budget>, Budget>;
+
+            /// A budget-limited asynchronous context.
+            pub struct Context<Budget>(BudgetContext<Budget>)
+            where
+                Budget: Budgetable;
+
+            impl<Budget> Context<Budget>
+            where
+                Budget: Budgetable,
+            {
+
+                /// Executes `future` with the provided budget. The future will run until it
+                /// completes or until it has invoked [`spend()`](crate::spend) enough to
+                /// exhaust the budget provided. If the future never called
+                /// [`spend()`](crate::spend), this function will not return until the future
+                /// has completed.
+                ///
+                /// This function returns a [`Future`] which must be awaited to execute the
+                /// function.
+                ///
+                /// This implementation is runtime agnostic.
+                ///
+                /// # Panics
+                ///
+                /// Panics when called within from within `future` or any code invoked by
+                /// `future`.
+                pub fn run_with_budget<F>(
+                    future: impl FnOnce(Context<Budget>) -> F,
+                    initial_budget: Budget,
+                ) -> BudgetedFuture<Budget, F>
+                where
+                    F: Future,
+                {
+                    BudgetedFuture(super::run_with_budget(
+                        |context| future(Context(context)),
+                        initial_budget,
+                    ))
+                }
+
+                /// Retrieves the current budget.
+                ///
+                /// This function should only be called by code that is guaranteed to be running
+                /// by this executor. When called outside of code run by this executor, this function will.
+                #[must_use]
+                pub fn budget(&self) -> usize {
+                    self.0.budget()
+                }
+
+                /// Spends `amount` from the curent budget.
+                ///
+                /// This function returns a future which must be awaited.
+                ///
+                /// ```rust
+                /// use budget_executor::spend;
+                ///
+                /// async fn some_task() {
+                ///     // Attempt to spend 5 budget. This will pause the
+                ///     // async task (Future) until enough budget is available.
+                ///     spend(5).await;
+                ///     // The budget was spent, proceed with the operation.
+                /// }
+                /// ```
+                pub fn spend(&self, amount: usize) -> SpendBudget<'_, Budget> {
+                    // How do we re-export SpendBudget since it's sahrd with async too. crate-level module?
+                    SpendBudget::from(self.0.spend(amount))
+                }
+            }
+
+            /// Executes a future with a given budget when awaited.
+            ///
+            /// This future is returned from [`Context::run_with_budget()`].
+            #[must_use = "the future must be awaited to be executed"]
+            pub struct BudgetedFuture<Budget, F>(super::BudgetedFuture<Budget, Backing<Budget>, F>)
+            where
+                Budget: Budgetable;
+
+            impl<Budget, F> Future for BudgetedFuture<Budget, F>
+            where
+                Budget: Budgetable,
+                F: Future,
+            {
+                type Output = Progress<Budget, F>;
+
+                fn poll(
+                    mut self: Pin<&mut Self>,
+                    cx: &mut task::Context<'_>,
+                ) -> Poll<Self::Output> {
+                    let inner = Pin::new(&mut self.0);
+                    match inner.poll(cx) {
+                        Poll::Ready(output) => Poll::Ready(Progress::from(output)),
+                        Poll::Pending => Poll::Pending,
+                    }
+                }
+            }
+            /// The progress of a future's execution.
+            pub enum Progress<Budget, F>
+            where
+                Budget: Budgetable,
+                F: Future,
+            {
+                /// The future was interrupted because it requested to spend more budget
+                /// than was available.
+                NoBudget(IncompleteFuture<Budget, F>),
+                /// The future has completed.
+                Complete(BudgetResult<F::Output, Budget>),
+            }
+
+            impl<Budget, F> From<super::Progress<Budget, Backing<Budget>, F>> for Progress<Budget, F>
+            where
+                Budget: Budgetable,
+                F: Future, {
+                fn from(progress: super::Progress<Budget, Backing<Budget>, F>) -> Self {
+                    match progress {
+                        super::Progress::NoBudget(incomplete) => Progress::NoBudget(IncompleteFuture(incomplete)),
+                        super::Progress::Complete(result) => Progress::Complete(result)
+                    }
+                }
+            }
+
+            /// A future that was budgeted using [`Context::run_with_budget()`]
+            /// that has not yet completed.
+            pub struct IncompleteFuture<Budget, F>(
+                pub(super) super::IncompleteFuture<Budget, Backing<Budget>, F>,
+            )
+            where
+                F: Future,
+                Budget: Budgetable;
+
+            impl<Budget, F> IncompleteFuture<Budget, F>
+            where
+                F: Future,
+                Budget: Budgetable,
+            {
+                /// Adds `additional_budget` to the remaining balance and continues
+                /// executing the future.
+                ///
+                /// This function returns a future that must be awaited for anything to happen.
+                pub fn continue_with_additional_budget(
+                    self,
+                    additional_budget: usize,
+                ) -> BudgetedFuture<Budget, F> {
+                    BudgetedFuture(self.0.continue_with_additional_budget(additional_budget))
+                }
+
+                /// Waits for additional budget to be allocated through
+                /// [`ReplenishableBudget::replenish()`](crate::ReplenishableBudget::replenish).
+                pub fn wait_for_budget(self) -> WaitForBudgetFuture<Budget, F> {
+                    WaitForBudgetFuture(self.0.wait_for_budget())
+                }
+
+            }
+
+            /// A future that waits for additional budget to be allocated
+            /// through
+            /// [`ReplenishableBudget::replenish()`](crate::ReplenishableBudget::replenish).
+            ///
+            /// This must be awaited to be executed.
+            #[must_use = "the future must be awaited to be executed"]
+            pub struct WaitForBudgetFuture<Budget, F>(
+                pub(super) super::WaitForBudgetFuture<Budget, Backing<Budget>, F>,
+            )
+            where
+                F: Future,
+                Budget: Budgetable;
+
+            impl<Budget, F> Future for WaitForBudgetFuture<Budget, F>
+            where
+                F: Future,
+                Budget: Budgetable,
+            {
+                type Output = Progress<Budget, F>;
+
+                fn poll(
+                    mut self: Pin<&mut Self>,
+                    cx: &mut task::Context<'_>,
+                ) -> Poll<Self::Output> {
+                    let inner = Pin::new(&mut self.0);
+                    match inner.poll(cx) {
+                        Poll::Ready(output) => Poll::Ready(Progress::from(output)),
+                        Poll::Pending => Poll::Pending,
+                    }
+                }
+            }
+        }
+    };
+}
+
+define_public_interface!(
+    threadsafe,
+    SyncContainer,
+    "A threadsafe (`Send + Sync`), asynchronous budgeting implementation that is runtime agnostic.\n\nThe only difference between this module and the [`singlethreaded`] module is that this one uses [`std::sync::Arc`] and [`std::sync::Mutex`] instead of [`std::rc::Rc`] and [`std::cell::RefCell`]."
+);
+
+define_public_interface!(
+    singlethreaded,
+    NotSyncContainer,
+    "A single-threaded (`!Send + !Sync`), asynchronous budgeting implementation that is runtime agnostic.\n\nThe only difference between this module and the [`threadsafe`] module is that this one uses [`std::rc::Rc`] and [`std::cell::RefCell`] instead of [`std::sync::Arc`] and [`std::sync::Mutex`]."
+);

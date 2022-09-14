@@ -14,33 +14,50 @@
 
 use std::{
     cell::RefCell,
-    future::Future,
-    pin::Pin,
+    marker::PhantomData,
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
     },
-    task::{Context, Poll, Waker},
+    task::Waker,
 };
 
-use crate::sealed::BudgetableSealed;
+use crate::{sealed::BudgetableSealed, spend::SpendBudget};
 
 /// A budget implementation compatible with any async executor.
 pub mod asynchronous;
 /// A standalone implementation does not require another async executor and
 /// blocks the current thread while executing.
 pub mod blocking;
+/// Shared implementation of budget spending.
+pub mod spend;
 
-#[derive(Debug, Clone)]
-pub struct BudgetContext<Budget> {
-    data: Rc<BudgetContextData<Budget>>,
+#[derive(Debug)]
+struct BudgetContext<Backing, Budget>
+where
+    Backing: Container<BudgetContextData<Budget>>,
+{
+    data: Backing,
+    _budget: PhantomData<Budget>,
+}
+
+impl<Backing, Budget> Clone for BudgetContext<Backing, Budget>
+where
+    Backing: Container<BudgetContextData<Budget>>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            data: self.data.cloned(),
+            _budget: PhantomData,
+        }
+    }
 }
 
 #[derive(Debug)]
 struct BudgetContextData<Budget> {
-    budget: RefCell<Budget>,
-    future_waker: RefCell<Option<Waker>>,
+    budget: Budget,
+    future_waker: Option<Waker>,
 }
 
 /// The result of a completed future.
@@ -52,58 +69,18 @@ pub struct BudgetResult<T, Budget> {
     pub balance: Budget,
 }
 
-/// Spends `amount` from the curent budget.
-///
-/// This is a future that must be awaited. This future is created by `spend()`.
-#[derive(Debug)]
-#[must_use = "budget is not spent until this future is awaited"]
-pub struct SpendBudget<'a, Budget> {
-    context: &'a BudgetContext<Budget>,
-    amount: usize,
-}
-
-impl<'a, Budget> Future for SpendBudget<'a, Budget>
+impl<Backing, Budget> BudgetContext<Backing, Budget>
 where
     Budget: Budgetable,
-{
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut budget = self.context.data.budget.borrow_mut();
-        if budget.spend(self.amount) {
-            budget.remove_waker(cx.waker());
-            Poll::Ready(())
-        } else {
-            // Not enough budget
-
-            match &mut *self.context.data.future_waker.borrow_mut() {
-                Some(existing_waker) if existing_waker.will_wake(cx.waker()) => {
-                    *existing_waker = cx.waker().clone();
-                }
-                waker => {
-                    *waker = Some(cx.waker().clone());
-                }
-            }
-
-            budget.add_waker(cx.waker());
-
-            Poll::Pending
-        }
-    }
-}
-
-impl<Budget> BudgetContext<Budget>
-where
-    Budget: Budgetable,
+    Backing: Container<BudgetContextData<Budget>>,
 {
     /// Retrieves the current budget.
     ///
     /// This function should only be called by code that is guaranteed to be running
     /// by this executor. When called outside of code run by this executor, this function will.
     #[must_use]
-    pub fn budget(&self) -> usize {
-        let budget = self.data.budget.borrow();
-        (&*budget).get()
+    fn budget(&self) -> usize {
+        self.data.map_locked(|data| data.budget.get())
     }
 
     /// Spends `amount` from the curent budget.
@@ -120,53 +97,13 @@ where
     ///     // The budget was spent, proceed with the operation.
     /// }
     /// ```
-    pub fn spend(&self, amount: usize) -> SpendBudget<'_, Budget> {
+    fn spend(&self, amount: usize) -> SpendBudget<'_, Backing, Budget> {
         SpendBudget {
             context: self,
             amount,
         }
     }
 }
-
-// #[must_use]
-// struct BudgetGuard {
-//     needs_reset: bool,
-// }
-
-// fn set_budget(new_budget: Box<dyn AnyBudget>) -> BudgetGuard {
-//     BUDGET.with(|budget| {
-//         let mut budget = budget.borrow_mut();
-
-//         assert!(
-//             (&*budget).is_none(),
-//             "blocking-executor is not able to be nested"
-//         );
-//         *budget = Some(new_budget);
-//     });
-//     BudgetGuard { needs_reset: true }
-// }
-
-// impl BudgetGuard {
-//     pub fn take_budget(mut self) -> Box<dyn AnyBudget> {
-//         self.needs_reset = false;
-
-//         BUDGET.with(RefCell::take).expect("should still be present")
-//         // boxed_budget
-//         //     .as_any_mut()
-//         //     .downcast_mut::<Option<Budget>>()
-//         //     .expect("types should match")
-//         //     .take()
-//         //     .expect("should always be Some")
-//     }
-// }
-
-// impl Drop for BudgetGuard {
-//     fn drop(&mut self) {
-//         if self.needs_reset {
-//             BUDGET.with(RefCell::take);
-//         }
-//     }
-// }
 
 /// A type that can be used as a budget.
 ///
@@ -229,6 +166,12 @@ impl ReplenishableBudget {
         for waker in waker.drain(..) {
             waker.wake();
         }
+    }
+
+    /// Returns the remaining budget.
+    #[must_use]
+    pub fn remaining(&self) -> usize {
+        self.data.budget.load(Ordering::Acquire)
     }
 }
 
@@ -294,6 +237,66 @@ impl BudgetableSealed for ReplenishableBudget {
         {
             stored_waker.remove(index);
         }
+    }
+}
+
+trait Container<T>: Unpin + 'static {
+    fn new(contained: T) -> Self;
+    fn cloned(&self) -> Self;
+    fn map_locked<R, F: FnOnce(&mut T) -> R>(&self, map: F) -> R;
+}
+
+#[derive(Debug)]
+struct SyncContainer<T>(Arc<Mutex<T>>);
+
+impl<T> Clone for SyncContainer<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T> Container<T> for SyncContainer<T>
+where
+    T: 'static,
+{
+    fn map_locked<R, F: FnOnce(&mut T) -> R>(&self, map: F) -> R {
+        let mut locked = self.0.lock().unwrap();
+        map(&mut locked)
+    }
+
+    fn cloned(&self) -> Self {
+        Self(self.0.clone())
+    }
+
+    fn new(contained: T) -> Self {
+        Self(Arc::new(Mutex::new(contained)))
+    }
+}
+
+#[derive(Debug)]
+struct NotSyncContainer<T>(Rc<RefCell<T>>);
+
+impl<T> Clone for NotSyncContainer<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T> Container<T> for NotSyncContainer<T>
+where
+    T: 'static,
+{
+    fn map_locked<R, F: FnOnce(&mut T) -> R>(&self, map: F) -> R {
+        let mut locked = self.0.borrow_mut();
+        map(&mut *locked)
+    }
+
+    fn cloned(&self) -> Self {
+        Self(self.0.clone())
+    }
+
+    fn new(contained: T) -> Self {
+        Self(Rc::new(RefCell::new(contained)))
     }
 }
 

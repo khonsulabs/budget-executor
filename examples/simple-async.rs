@@ -1,15 +1,12 @@
 use std::time::Duration;
 
-use budget_executor::{
-    asynchronous::{run_with_budget, Progress},
-    BudgetContext,
-};
+use budget_executor::asynchronous::singlethreaded::{Context, Progress};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     // Run a task with no initial budget. The first time the task asks to spend
     // any budget, it will be paused.
-    let mut progress = run_with_budget(some_task_to_limit, 0).await;
+    let mut progress = Context::run_with_budget(some_task_to_limit, 0).await;
 
     // At this point, the task has run until the first call to
     // budget_executor::spend. Because we gave an initial_budget of 0, the future
@@ -36,7 +33,7 @@ async fn main() {
     }
 }
 
-async fn some_task_to_limit(context: BudgetContext<usize>) -> bool {
+async fn some_task_to_limit(context: Context<usize>) -> bool {
     do_some_operation(1, &context).await;
     do_some_operation(5, &context).await;
     do_some_operation(1, &context).await;
@@ -44,7 +41,7 @@ async fn some_task_to_limit(context: BudgetContext<usize>) -> bool {
     true
 }
 
-async fn do_some_operation(times: u8, context: &BudgetContext<usize>) {
+async fn do_some_operation(times: u8, context: &Context<usize>) {
     println!("> Asking to spend {times} from the budget");
     context.spend(usize::from(times)).await;
     tokio::time::sleep(Duration::from_millis(u64::from(times) * 100)).await;

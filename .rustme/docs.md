@@ -16,12 +16,30 @@ loops or too-intensive scripts slowing down a server. The interpreter can assign
 different costs to various operations.
 
 This crate has two implementations of this approach: one that blocks the current
-thread and one that works with any async runtime.
+thread and one that works with any async runtime. Additionally, there are
+`threadsafe` (`Send + Sync`) and `singlethreaded` variations:
+
+| Async? | `Send + Sync`? | Module                                                          |
+|--------|----------------|-----------------------------------------------------------------|
+| no     | no             | [`blocking::singlethreaded`]($blocking-singlethreaded$)             |
+| no     | yes            | [`blocking::threadsafe`]($blocking-threadsafe$)                 |
+| yes    | no             | [`asynchronous::singlethreaded`]($asynchronous-singlethreaded$) |
+| yes    | yes            | [`asynchronous::threadsafe`]($asynchronous-threadsafe$)         |
+
+The APIs are identically designed between the modules. The notable changes
+between the modules are:
+
+- For async, functions that execute the future are implemented as futures. This
+  means, for example, `run_with_budget()` must be `.await`ed for anything to
+  happen.
+- For `Send + Sync`, the backing type is changed from `Rc<RefCell<T>>` to
+  `Arc<Mutex<T>>`. This is transparent to the public API, but the expected
+  performance differences will apply.
 
 ## Using from non-async code (Blocking)
 
-This example of the [blocking]($blocking$) implementation is from
-`examples/simple.rs` in the repository:
+This example of the [blocking, single-threaded]($blocking-singlethreaded$) implementation is
+from `examples/simple.rs` in the repository:
 
 ```rust
 $../examples/simple.rs$
@@ -80,7 +98,8 @@ asynchronous implementation.
 
 ## Using from async code
 
-This example is `examples/simple-async.rs` in the repository:
+This example of the [asynchronous, single-threaded]($asynchronous-singlethreaded$) implementation
+is `examples/simple-async.rs` in the repository:
 
 ```rust
 $../examples/simple-async.rs$
@@ -91,7 +110,8 @@ When run, it produces the same output as displayed in the blocking section.
 ### How does this work?
 
 This example is identical to the blocking example, but instead uses the
-[`asynchronous`]($async$) module's APIs: [`run_with_budget().await`]($async-run$)
-and [`continue_with_additional_budget().await`]($async-continue$).
+[`asynchronous`]($asynchronous-singlethreaded$) module's APIs:
+[`run_with_budget().await`]($async-run$) and
+[`continue_with_additional_budget().await`]($async-continue$).
 
 This implementation is runtime agnostic and is actively tested against tokio.
