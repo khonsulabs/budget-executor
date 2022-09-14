@@ -290,24 +290,6 @@
 <span id="284">284</span>
 <span id="285">285</span>
 <span id="286">286</span>
-<span id="287">287</span>
-<span id="288">288</span>
-<span id="289">289</span>
-<span id="290">290</span>
-<span id="291">291</span>
-<span id="292">292</span>
-<span id="293">293</span>
-<span id="294">294</span>
-<span id="295">295</span>
-<span id="296">296</span>
-<span id="297">297</span>
-<span id="298">298</span>
-<span id="299">299</span>
-<span id="300">300</span>
-<span id="301">301</span>
-<span id="302">302</span>
-<span id="303">303</span>
-<span id="304">304</span>
 </pre><pre class="rust"><code><span class="attribute">#![<span class="ident">doc</span> <span class="op">=</span> <span class="macro">include_str!</span>(<span class="string">&quot;.crate-docs.md&quot;</span>)]</span>
 <span class="attribute">#![<span class="ident">warn</span>(
     <span class="ident">clippy::cargo</span>,
@@ -384,29 +366,11 @@
     <span class="ident">Budget</span>: <span class="ident">Budgetable</span>,
     <span class="ident">Backing</span>: <span class="ident">Container</span><span class="op">&lt;</span><span class="ident">BudgetContextData</span><span class="op">&lt;</span><span class="ident">Budget</span><span class="op">&gt;</span><span class="op">&gt;</span>,
 {
-    <span class="doccomment">/// Retrieves the current budget.</span>
-    <span class="doccomment">///</span>
-    <span class="doccomment">/// This function should only be called by code that is guaranteed to be running</span>
-    <span class="doccomment">/// by this executor. When called outside of code run by this executor, this function will.</span>
     <span class="attribute">#[<span class="ident">must_use</span>]</span>
     <span class="kw">fn</span> <span class="ident">budget</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="ident">usize</span> {
         <span class="self">self</span>.<span class="ident">data</span>.<span class="ident">map_locked</span>(<span class="op">|</span><span class="ident">data</span><span class="op">|</span> <span class="ident">data</span>.<span class="ident">budget</span>.<span class="ident">get</span>())
     }
 
-    <span class="doccomment">/// Spends `amount` from the curent budget.</span>
-    <span class="doccomment">///</span>
-    <span class="doccomment">/// This function returns a future which must be awaited.</span>
-    <span class="doccomment">///</span>
-    <span class="doccomment">/// ```rust</span>
-    <span class="doccomment">/// use budget_executor::spend;</span>
-    <span class="doccomment">///</span>
-    <span class="doccomment">/// async fn some_task() {</span>
-    <span class="doccomment">///     // Attempt to spend 5 budget. This will pause the</span>
-    <span class="doccomment">///     // async task (Future) until enough budget is available.</span>
-    <span class="doccomment">///     spend(5).await;</span>
-    <span class="doccomment">///     // The budget was spent, proceed with the operation.</span>
-    <span class="doccomment">/// }</span>
-    <span class="doccomment">/// ```</span>
     <span class="kw">fn</span> <span class="ident">spend</span>(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="ident">amount</span>: <span class="ident">usize</span>) -&gt; <span class="ident">SpendBudget</span><span class="op">&lt;</span><span class="lifetime">&#39;_</span>, <span class="ident">Backing</span>, <span class="ident">Budget</span><span class="op">&gt;</span> {
         <span class="ident">SpendBudget</span> {
             <span class="ident">context</span>: <span class="self">self</span>,
