@@ -28,12 +28,12 @@ This example of the [blocking](https://khonsulabs.github.io/budget-executor/main
 ```rust
 use std::time::Duration;
 
-use budget_executor::blocking::{run_with_budget, Progress};
+use budget_executor::blocking::{run_with_budget, Progress, Runtime};
 
 fn main() {
     // Run a task with no initial budget. The first time the task asks to spend
     // any budget, it will be paused.
-    let mut progress = run_with_budget(some_task_to_limit(), 0);
+    let mut progress = run_with_budget(some_task_to_limit, 0);
 
     // At this point, the task has run until the first call to
     // budget_executor::spend. Because we gave an initial_budget of 0, the future
@@ -60,21 +60,26 @@ fn main() {
     }
 }
 
-async fn some_task_to_limit() -> bool {
-    do_some_operation(1).await;
-    do_some_operation(5).await;
-    do_some_operation(1).await;
-    do_some_operation(25).await;
+async fn some_task_to_limit(runtime: Runtime<usize>) -> bool {
+    do_some_operation(1, &runtime).await;
+    do_some_operation(5, &runtime).await;
+    do_some_operation(1, &runtime).await;
+    do_some_operation(25, &runtime).await;
     true
 }
 
-async fn do_some_operation(times: u8) {
+async fn do_some_operation(times: u8, runtime: &Runtime<usize>) {
     println!("> Asking to spend {times} from the budget");
-    budget_executor::spend(usize::from(times)).await;
+    runtime.spend(usize::from(times)).await;
 
     // Despite being async code, because we know we're running in a
     // single-threaded environment, we can still call blocking operations.
     std::thread::sleep(Duration::from_millis(u64::from(times) * 100));
+}
+
+#[test]
+fn runs() {
+    main()
 }
 
 ```
@@ -137,13 +142,16 @@ This example is `examples/simple-async.rs` in the repository:
 ```rust
 use std::time::Duration;
 
-use budget_executor::asynchronous::{run_with_budget, Progress};
+use budget_executor::{
+    asynchronous::{run_with_budget, Progress},
+    BudgetContext,
+};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     // Run a task with no initial budget. The first time the task asks to spend
     // any budget, it will be paused.
-    let mut progress = run_with_budget(some_task_to_limit(), 0).await;
+    let mut progress = run_with_budget(some_task_to_limit, 0).await;
 
     // At this point, the task has run until the first call to
     // budget_executor::spend. Because we gave an initial_budget of 0, the future
@@ -170,18 +178,23 @@ async fn main() {
     }
 }
 
-async fn some_task_to_limit() -> bool {
-    do_some_operation(1).await;
-    do_some_operation(5).await;
-    do_some_operation(1).await;
-    do_some_operation(25).await;
+async fn some_task_to_limit(context: BudgetContext<usize>) -> bool {
+    do_some_operation(1, &context).await;
+    do_some_operation(5, &context).await;
+    do_some_operation(1, &context).await;
+    do_some_operation(25, &context).await;
     true
 }
 
-async fn do_some_operation(times: u8) {
+async fn do_some_operation(times: u8, context: &BudgetContext<usize>) {
     println!("> Asking to spend {times} from the budget");
-    budget_executor::spend(usize::from(times)).await;
+    context.spend(usize::from(times)).await;
     tokio::time::sleep(Duration::from_millis(u64::from(times) * 100)).await;
+}
+
+#[test]
+fn runs() {
+    main()
 }
 
 ```
