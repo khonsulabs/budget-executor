@@ -110,15 +110,12 @@ mod blocking {
                 println!("T> Done");
             });
 
-            let mut incomplete = match Runtime::run_with_budget(future, budget) {
-                Progress::NoBudget(incomplete) => incomplete,
-                Progress::Complete(result) => unreachable!("future completed: {result:?}"),
+            if let Progress::NoBudget(mut incomplete) = Runtime::run_with_budget(future, budget) {
+                while let Progress::NoBudget(new_incomplete_task) = incomplete.wait_for_budget() {
+                    println!("M> Waiting to complete");
+                    incomplete = new_incomplete_task;
+                }
             };
-
-            while let Progress::NoBudget(new_incomplete_task) = incomplete.wait_for_budget() {
-                println!("M> Waiting to complete");
-                incomplete = new_incomplete_task;
-            }
         }
 
         #[test]
@@ -232,14 +229,11 @@ mod asynchronous {
             println!("T> Done");
         });
 
-        let mut incomplete = match Context::run_with_budget(future, budget).await {
-            Progress::NoBudget(incomplete) => incomplete,
-            Progress::Complete(result) => unreachable!("future completed: {result:?}"),
+        if let Progress::NoBudget(mut incomplete) = Context::run_with_budget(future, budget).await {
+            while let Progress::NoBudget(new_incomplete_task) = incomplete.wait_for_budget().await {
+                println!("M> Waiting to complete");
+                incomplete = new_incomplete_task;
+            }
         };
-
-        while let Progress::NoBudget(new_incomplete_task) = incomplete.wait_for_budget().await {
-            println!("M> Waiting to complete");
-            incomplete = new_incomplete_task;
-        }
     }
 }
