@@ -285,6 +285,7 @@ mod asynchronous {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)] // LocalSet causes undefined behavior errors in miri
     async fn nightmare() {
         const TASKS: usize = 100;
         const ITERS_PER_TASK: usize = 100;
