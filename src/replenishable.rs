@@ -32,10 +32,11 @@ impl ReplenishableBudget {
     pub fn replenish(&self, amount: usize) {
         let mut state = self.data.state.lock().expect("poisoned");
         state.generation = state.generation.wrapping_add(1);
+        state.denied_budget_at_generation = None;
         state.budget = state.budget.saturating_add(amount);
 
-        for waker in state.wakers.drain(..) {
-            waker.wake();
+        for waker in &state.wakers {
+            waker.wake_by_ref();
         }
         drop(state);
         self.data.sync.notify_all();

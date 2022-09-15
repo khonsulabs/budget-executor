@@ -161,6 +161,51 @@ mod blocking {
             let result = Runtime::run_with_budget(task, budget).wait_until_complete();
             assert_eq!(result.balance.remaining(), 15 * 7 - 100);
         }
+
+        #[test]
+        fn nightmare() {
+            const TASKS: usize = 100;
+            const ITERS_PER_TASK: usize = 100;
+            // This test launches a ton of tasks, while an external thread is
+            // filling the budget. This test is aimed to try to find deadlocks.
+            let budget = ReplenishableBudget::new(0);
+            std::thread::spawn({
+                let budget = budget.clone();
+                move || {
+                    for i in 0..TASKS * ITERS_PER_TASK {
+                        std::thread::sleep(Duration::from_micros(u64::try_from(i).unwrap() % 10));
+                        budget.replenish(1);
+                    }
+                    println!("Budget Filled");
+                }
+            });
+
+            let task = |runtime: Runtime<ReplenishableBudget>| async move {
+                let (sender, receiver) = flume::unbounded();
+
+                for task in 0..TASKS {
+                    runtime.spawn({
+                        let runtime = runtime.clone();
+                        let sender = sender.clone();
+                        async move {
+                            for _ in 0..ITERS_PER_TASK {
+                                runtime.spend(1).await;
+                                println!("{task} Spent 1");
+                            }
+                            sender.send(()).unwrap();
+                        }
+                    });
+                }
+
+                // Wait for all tasks to send the completion message.
+                for _ in 0..TASKS {
+                    receiver.recv_async().await.unwrap();
+                }
+            };
+
+            let result = Runtime::run_with_budget(task, budget).wait_until_complete();
+            assert_eq!(result.balance.remaining(), 0);
+        }
     }
 }
 
