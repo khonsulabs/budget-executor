@@ -119,12 +119,11 @@ impl BudgetableSealed for ReplenishableBudget {
     fn park_for_budget(&self) {
         let mut state = self.data.state.lock().expect("poisoned");
         loop {
-            if state.denied_budget_at_generation.is_some()
-                && state.denied_budget_at_generation != Some(state.generation)
+            // If the budget hasn't been denied or the generation has changed
+            // since the budget was denied, do not park.
+            if state.denied_budget_at_generation.is_none()
+                || state.denied_budget_at_generation != Some(state.generation)
             {
-                // The budget was previously denied, but new budget has been
-                // allocated. By parking now, we could enter a deadlock if no
-                // additional budget is allocated.
                 break;
             }
 
