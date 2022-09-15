@@ -19,7 +19,7 @@ where
     let context = BudgetContext {
         data: Backing::new(BudgetContextData {
             budget: initial_budget,
-            future_waker: None,
+            paused_future: None,
         }),
         _budget: PhantomData,
     };
@@ -103,7 +103,7 @@ where
     Backing: Container<BudgetContextData<Budget>>,
 {
     budget_context.data.map_locked(|data| {
-        data.future_waker = None;
+        data.paused_future = None;
     });
 
     let pinned_future = Pin::new(&mut future);
@@ -117,11 +117,11 @@ where
         Poll::Pending => {
             let waker = budget_context
                 .data
-                .map_locked(|data| data.future_waker.take());
+                .map_locked(|data| data.paused_future.take());
             if let Some(waker) = waker {
                 BudgetPoll::Ready(Progress::NoBudget(IncompleteFuture {
                     future,
-                    waker,
+                    paused_future: waker,
                     context: budget_context,
                 }))
             } else {
@@ -156,7 +156,7 @@ where
     Backing: Container<BudgetContextData<Budget>>,
 {
     future: Pin<Box<F>>,
-    waker: Waker,
+    paused_future: Waker,
     context: BudgetContext<Backing, Budget>,
 }
 
@@ -176,11 +176,11 @@ where
     ) -> BudgetedFuture<Budget, Backing, F> {
         let Self {
             future,
-            waker,
+            paused_future,
             context,
             ..
         } = self;
-        waker.wake();
+        paused_future.wake();
         context
             .data
             .map_locked(|data| data.budget.replenish(additional_budget));
@@ -198,13 +198,13 @@ where
     pub fn wait_for_budget(self) -> WaitForBudgetFuture<Budget, Backing, F> {
         let Self {
             future,
-            waker,
+            paused_future: waker,
             context,
             ..
         } = self;
         WaitForBudgetFuture {
             has_returned_pending: false,
-            waker: Some(waker),
+            paused_future: Some(waker),
             future: BudgetedFuture {
                 state: Some(BudgetedFutureState {
                     future,
@@ -227,7 +227,7 @@ where
     Backing: Container<BudgetContextData<Budget>>,
 {
     has_returned_pending: bool,
-    waker: Option<Waker>,
+    paused_future: Option<Waker>,
     future: BudgetedFuture<Budget, Backing, F>,
 }
 
@@ -241,8 +241,8 @@ where
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         if self.has_returned_pending {
-            if let Some(waker) = self.waker.take() {
-                waker.wake();
+            if let Some(future) = self.paused_future.take() {
+                future.wake();
             }
 
             let state = self

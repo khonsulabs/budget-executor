@@ -16,10 +16,7 @@ use std::{
     cell::RefCell,
     marker::PhantomData,
     rc::Rc,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     task::Waker,
 };
 
@@ -30,8 +27,11 @@ pub mod asynchronous;
 /// A standalone implementation does not require another async executor and
 /// blocks the current thread while executing.
 pub mod blocking;
+mod replenishable;
 /// Shared implementation of budget spending.
 pub mod spend;
+
+pub use replenishable::ReplenishableBudget;
 
 #[derive(Debug)]
 struct BudgetContext<Backing, Budget>
@@ -57,7 +57,7 @@ where
 #[derive(Debug)]
 struct BudgetContextData<Budget> {
     budget: Budget,
-    future_waker: Option<Waker>,
+    paused_future: Option<Waker>,
 }
 
 /// The result of a completed future.
@@ -102,6 +102,7 @@ mod sealed {
         fn replenish(&mut self, amount: usize);
         fn add_waker(&self, waker: &std::task::Waker);
         fn remove_waker(&self, waker: &std::task::Waker);
+        fn park_for_budget(&self);
     }
 }
 
@@ -128,97 +129,9 @@ impl BudgetableSealed for usize {
     fn add_waker(&self, _waker: &std::task::Waker) {}
 
     fn remove_waker(&self, _waker: &std::task::Waker) {}
-}
 
-/// An atomic budget storage that can be replenished by other threads or tasks
-/// than the one driving the budgeted task.
-#[derive(Clone, Debug, Default)]
-pub struct ReplenishableBudget {
-    data: Arc<ReplenishableBudgetData>,
-}
-
-impl ReplenishableBudget {
-    /// Adds `amount` to the budget. This will wake up the task if it is
-    /// currently waiting for additional budget.
-    pub fn replenish(&self, amount: usize) {
-        let mut budget = self.data.budget.load(Ordering::Acquire);
-        budget = budget.saturating_add(amount);
-        self.data.budget.store(budget, Ordering::Release);
-        let mut waker = self.data.waker.lock().expect("panics should be impossible");
-        for waker in waker.drain(..) {
-            waker.wake();
-        }
-    }
-
-    /// Returns the remaining budget.
-    #[must_use]
-    pub fn remaining(&self) -> usize {
-        self.data.budget.load(Ordering::Acquire)
-    }
-}
-
-#[derive(Debug, Default)]
-struct ReplenishableBudgetData {
-    budget: AtomicUsize,
-    waker: Mutex<Vec<Waker>>,
-}
-
-impl ReplenishableBudget {
-    /// Returns a new instance with the intiial budget provided.
-    #[must_use]
-    pub fn new(initial_budget: usize) -> Self {
-        Self {
-            data: Arc::new(ReplenishableBudgetData {
-                budget: AtomicUsize::new(initial_budget),
-                waker: Mutex::default(),
-            }),
-        }
-    }
-}
-
-impl Budgetable for ReplenishableBudget {}
-
-impl BudgetableSealed for ReplenishableBudget {
-    fn get(&self) -> usize {
-        self.data.budget.load(Ordering::Acquire)
-    }
-
-    fn spend(&mut self, amount: usize) -> bool {
-        self.data
-            .budget
-            .fetch_update(Ordering::Release, Ordering::Relaxed, |budget| {
-                budget.checked_sub(amount)
-            })
-            .is_ok()
-    }
-
-    fn replenish(&mut self, amount: usize) {
-        ReplenishableBudget::replenish(self, amount);
-    }
-
-    fn add_waker(&self, new_waker: &std::task::Waker) {
-        let mut stored_waker = self.data.waker.lock().expect("panics should be impossible");
-
-        if let Some((_, waker)) = stored_waker
-            .iter_mut()
-            .enumerate()
-            .find(|(_, waker)| waker.will_wake(new_waker))
-        {
-            *waker = new_waker.clone();
-        } else {
-            stored_waker.push(new_waker.clone());
-        }
-    }
-
-    fn remove_waker(&self, reference: &std::task::Waker) {
-        let mut stored_waker = self.data.waker.lock().expect("panics should be impossible");
-        if let Some((index, _)) = stored_waker
-            .iter()
-            .enumerate()
-            .find(|(_, waker)| waker.will_wake(reference))
-        {
-            stored_waker.remove(index);
-        }
+    fn park_for_budget(&self) {
+        std::thread::park();
     }
 }
 

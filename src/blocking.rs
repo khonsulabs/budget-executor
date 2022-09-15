@@ -127,7 +127,7 @@ where
         context: BudgetContext {
             data: Backing::new(crate::BudgetContextData {
                 budget: initial_budget,
-                future_waker: None,
+                paused_future: None,
             }),
             _budget: PhantomData,
         },
@@ -135,13 +135,14 @@ where
     };
 
     let waker = budget_waker::for_current_thread(runtime.tasks.cloned(), None);
-    execute_future(Box::pin(future(runtime.clone())), waker, runtime)
+    execute_future(Box::pin(future(runtime.clone())), waker, runtime, false)
 }
 
 fn execute_future<Budget, Tasks, Backing, F>(
     mut future: Pin<Box<F>>,
     waker: Waker,
     runtime: Runtime<Budget, Tasks, Backing>,
+    mut wait_for_budget: bool,
 ) -> Progress<Budget, Tasks, Backing, F>
 where
     Budget: Budgetable,
@@ -156,11 +157,11 @@ where
         let (ran_out_of_budget, budget_remaining_after_completion) =
             runtime.context.data.map_locked(|data| {
                 data.budget.remove_waker(cx.waker());
-                let ran_out_of_budget = data.future_waker.take().is_some();
+                let ran_out_of_budget = data.paused_future.take().is_some();
                 let budget_remaining_after_completion = if poll_result.is_ready() {
                     Some(data.budget.clone())
                 } else {
-                    if !ran_out_of_budget {
+                    if !ran_out_of_budget || wait_for_budget {
                         data.budget.add_waker(cx.waker());
                     }
                     None
@@ -176,7 +177,7 @@ where
             });
         }
 
-        if ran_out_of_budget {
+        if ran_out_of_budget && !wait_for_budget {
             return Progress::NoBudget(IncompleteFuture {
                 future,
                 waker,
@@ -191,7 +192,11 @@ where
         let mut task_to_wake = runtime.tasks.map_locked(|tasks| tasks.woke.pop_front());
 
         if task_to_wake.is_none() {
-            std::thread::park();
+            wait_for_budget = false;
+            runtime
+                .context
+                .data
+                .map_locked(|data| data.budget.park_for_budget());
         } else {
             // Call poll on all of the futures that are awake.
             while let Some(mut task) = task_to_wake {
@@ -250,7 +255,7 @@ where
             .data
             .map_locked(|data| data.budget.replenish(additional_budget));
 
-        execute_future(future, waker, runtime)
+        execute_future(future, waker, runtime, false)
     }
     /// Waits for additional budget to be allocated through
     /// [`ReplenishableBudget::replenish()`].
@@ -262,17 +267,7 @@ where
             ..
         } = self;
 
-        runtime
-            .context
-            .data
-            .map_locked(|data| data.budget.add_waker(&waker));
-        std::thread::park();
-        runtime
-            .context
-            .data
-            .map_locked(|data| data.budget.remove_waker(&waker));
-
-        execute_future(future, waker, runtime)
+        execute_future(future, waker, runtime, true)
     }
 }
 

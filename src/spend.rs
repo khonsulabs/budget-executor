@@ -33,7 +33,7 @@ where
                 Poll::Ready(())
             } else {
                 // Not enough budget
-                match &mut data.future_waker {
+                match &mut data.paused_future {
                     Some(existing_waker) if existing_waker.will_wake(cx.waker()) => {
                         *existing_waker = cx.waker().clone();
                     }
