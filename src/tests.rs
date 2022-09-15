@@ -212,6 +212,8 @@ mod blocking {
 mod asynchronous {
     use std::time::{Duration, Instant};
 
+    use tokio::task::LocalSet;
+
     use crate::{
         asynchronous::singlethreaded::{Context, Progress},
         ReplenishableBudget,
@@ -280,5 +282,58 @@ mod asynchronous {
                 incomplete = new_incomplete_task;
             }
         };
+    }
+
+    #[tokio::test]
+    async fn nightmare() {
+        const TASKS: usize = 100;
+        const ITERS_PER_TASK: usize = 100;
+        // This test launches a ton of tasks, while an external thread is
+        // filling the budget. This test is aimed to try to find deadlocks.
+        let budget = ReplenishableBudget::new(0);
+        std::thread::spawn({
+            let budget = budget.clone();
+            move || {
+                for i in 0..TASKS * ITERS_PER_TASK {
+                    std::thread::sleep(Duration::from_micros(u64::try_from(i).unwrap() % 10));
+                    budget.replenish(1);
+                }
+                println!("Budget Filled");
+            }
+        });
+
+        let task = |context: Context<ReplenishableBudget>| async move {
+            let (sender, receiver) = flume::unbounded();
+            let task_set = LocalSet::new();
+
+            for task in 0..TASKS {
+                task_set.spawn_local({
+                    let context = context.clone();
+                    let sender = sender.clone();
+                    async move {
+                        for _ in 0..ITERS_PER_TASK {
+                            context.spend(1).await;
+                            println!("{task} Spent 1");
+                        }
+                        sender.send(()).unwrap();
+                    }
+                });
+            }
+
+            task_set
+                .run_until(async move {
+                    // Wait for all tasks to send the completion message.
+                    for _ in 0..TASKS {
+                        receiver.recv_async().await.unwrap();
+                    }
+                })
+                .await;
+        };
+
+        let result = Context::run_with_budget(task, budget)
+            .await
+            .wait_until_complete()
+            .await;
+        assert_eq!(result.balance.remaining(), 0);
     }
 }

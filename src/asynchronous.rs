@@ -289,6 +289,7 @@ macro_rules! define_public_interface {
             type BudgetContext<Budget> = crate::BudgetContext<Backing<Budget>, Budget>;
 
             /// A budget-limited asynchronous context.
+            #[derive(Clone, Debug)]
             pub struct Context<Budget>(BudgetContext<Budget>)
             where
                 Budget: Budgetable;
@@ -381,6 +382,30 @@ macro_rules! define_public_interface {
                 NoBudget(IncompleteFuture<Budget, F>),
                 /// The future has completed.
                 Complete(BudgetResult<F::Output, Budget>),
+            }
+
+            impl<Budget, F> Progress<Budget, F>
+            where
+                Budget: Budgetable,
+                F: Future,
+            {
+                /// Continues executing the contained future until it is
+                /// completed.
+                ///
+                /// This function will never return if the future enters an
+                /// infinite loop or deadlocks, regardless of whether the budget
+                /// is exhausted or not.
+                pub async fn wait_until_complete(self) -> BudgetResult<F::Output, Budget> {
+                    let mut progress = self;
+                    loop {
+                        match progress {
+                            Progress::NoBudget(incomplete) => {
+                                progress = incomplete.wait_for_budget().await;
+                            }
+                            Progress::Complete(result) => break result,
+                        }
+                    }
+                }
             }
 
             impl<Budget, F> From<super::Progress<Budget, Backing<Budget>, F>> for Progress<Budget, F>
