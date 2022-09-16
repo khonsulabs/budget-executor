@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fmt::Debug,
     future::Future,
     marker::PhantomData,
@@ -10,32 +10,37 @@ use std::{
 
 use crate::{BudgetContext, BudgetContextData, BudgetResult, Budgetable, Container};
 
-struct Runtime<Budget, Tasks, Backing>
+struct Runtime<Budget, Tasks, SharedTasks, Backing>
 where
-    Tasks: Container<RuntimeTasks>,
+    SharedTasks: Container<PendingTasks>,
+    Tasks: Container<RunningTasks>,
     Backing: Container<BudgetContextData<Budget>>,
 {
     context: BudgetContext<Backing, Budget>,
+    shared_tasks: SharedTasks,
     tasks: Tasks,
 }
 
-impl<Budget, Tasks, Backing> Clone for Runtime<Budget, Tasks, Backing>
+impl<Budget, Tasks, SharedTasks, Backing> Clone for Runtime<Budget, Tasks, SharedTasks, Backing>
 where
     Budget: Clone,
-    Tasks: Container<RuntimeTasks>,
+    Tasks: Container<RunningTasks>,
+    SharedTasks: Container<PendingTasks>,
     Backing: Container<BudgetContextData<Budget>>,
 {
     fn clone(&self) -> Self {
         Self {
             context: self.context.clone(),
             tasks: self.tasks.cloned(),
+            shared_tasks: self.shared_tasks.cloned(),
         }
     }
 }
 
-impl<Budget, Tasks, Backing> Deref for Runtime<Budget, Tasks, Backing>
+impl<Budget, Tasks, SharedTasks, Backing> Deref for Runtime<Budget, Tasks, SharedTasks, Backing>
 where
-    Tasks: Container<RuntimeTasks>,
+    Tasks: Container<RunningTasks>,
+    SharedTasks: Container<PendingTasks>,
     Backing: Container<BudgetContextData<Budget>>,
 {
     type Target = BudgetContext<Backing, Budget>;
@@ -45,10 +50,11 @@ where
     }
 }
 
-impl<Budget, Tasks, Backing> Debug for Runtime<Budget, Tasks, Backing>
+impl<Budget, Tasks, SharedTasks, Backing> Debug for Runtime<Budget, Tasks, SharedTasks, Backing>
 where
     Budget: Budgetable,
-    Tasks: Container<RuntimeTasks>,
+    Tasks: Container<RunningTasks>,
+    SharedTasks: Container<PendingTasks>,
     Backing: Container<BudgetContextData<Budget>> + Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -59,17 +65,18 @@ where
     }
 }
 
-impl<Budget, Tasks, Backing> Runtime<Budget, Tasks, Backing>
+impl<Budget, Tasks, SharedTasks, Backing> Runtime<Budget, Tasks, SharedTasks, Backing>
 where
     Budget: Budgetable,
-    Tasks: Container<RuntimeTasks>,
+    Tasks: Container<RunningTasks>,
+    SharedTasks: Container<PendingTasks>,
     Backing: Container<BudgetContextData<Budget>>,
 {
     pub fn spawn<Status, F: Future + 'static>(&self, future: F) -> TaskHandle<Status, F::Output>
     where
         Status: Container<SpawnedTaskStatus<F::Output>>,
     {
-        self.tasks.map_locked(|tasks| {
+        self.shared_tasks.map_locked(|tasks| {
             let status = Status::new(SpawnedTaskStatus::default());
             let task_id = tasks.next_task_id;
             tasks.next_task_id = tasks.next_task_id.checked_add(1).expect("u64 wrapped");
@@ -77,11 +84,11 @@ where
             // TODO two allocations isn't ideal. Can we do pin projection through
             // dynamic dispatch? I think it's "safe" because it seems to fit the
             // definition of structural pinning?
-            tasks.woke.push_back(Box::new(SpawnedTask {
+            tasks.new.push_back(Box::new(SpawnedTask {
                 id: task_id,
                 future: Some(Box::pin(future)),
                 status: status.cloned(),
-                waker: budget_waker::for_current_thread(self.tasks.cloned(), Some(task_id)),
+                waker: budget_waker::for_current_thread(self.shared_tasks.cloned(), Some(task_id)),
             }));
 
             TaskHandle {
@@ -93,8 +100,14 @@ where
 }
 
 #[derive(Default)]
-pub(crate) struct RuntimeTasks {
+pub(crate) struct PendingTasks {
     next_task_id: u64,
+    new: VecDeque<Box<dyn AnySpawnedTask>>,
+    tasks_to_wake: HashSet<u64>,
+}
+
+#[derive(Default)]
+pub(crate) struct RunningTasks {
     woke: VecDeque<Box<dyn AnySpawnedTask>>,
     pending: HashMap<u64, Box<dyn AnySpawnedTask>>,
 }
@@ -113,13 +126,14 @@ pub(crate) struct RuntimeTasks {
 ///
 /// Panics when called within from within `future` or any code invoked by
 /// `future`.
-fn run_with_budget<Budget, Tasks, Backing, F>(
-    future: impl FnOnce(Runtime<Budget, Tasks, Backing>) -> F,
+fn run_with_budget<Budget, Tasks, SharedTasks, Backing, F>(
+    future: impl FnOnce(Runtime<Budget, Tasks, SharedTasks, Backing>) -> F,
     initial_budget: Budget,
-) -> Progress<Budget, Tasks, Backing, F>
+) -> Progress<Budget, Tasks, SharedTasks, Backing, F>
 where
     Budget: Budgetable,
-    Tasks: Container<RuntimeTasks>,
+    Tasks: Container<RunningTasks>,
+    SharedTasks: Container<PendingTasks>,
     F: Future,
     Backing: Container<BudgetContextData<Budget>>,
 {
@@ -131,22 +145,24 @@ where
             }),
             _budget: PhantomData,
         },
-        tasks: Tasks::new(RuntimeTasks::default()),
+        tasks: Tasks::new(RunningTasks::default()),
+        shared_tasks: SharedTasks::new(PendingTasks::default()),
     };
 
-    let waker = budget_waker::for_current_thread(runtime.tasks.cloned(), None);
+    let waker = budget_waker::for_current_thread(runtime.shared_tasks.cloned(), None);
     execute_future(Box::pin(future(runtime.clone())), waker, runtime, false)
 }
 
-fn execute_future<Budget, Tasks, Backing, F>(
+fn execute_future<Budget, Tasks, SharedTasks, Backing, F>(
     mut future: Pin<Box<F>>,
     waker: Waker,
-    runtime: Runtime<Budget, Tasks, Backing>,
+    runtime: Runtime<Budget, Tasks, SharedTasks, Backing>,
     mut wait_for_budget: bool,
-) -> Progress<Budget, Tasks, Backing, F>
+) -> Progress<Budget, Tasks, SharedTasks, Backing, F>
 where
     Budget: Budgetable,
-    Tasks: Container<RuntimeTasks>,
+    Tasks: Container<RunningTasks>,
+    SharedTasks: Container<PendingTasks>,
     F: Future,
     Backing: Container<BudgetContextData<Budget>>,
 {
@@ -189,19 +205,27 @@ where
 
         // If we have our own tasks to run, execute them. Otherwise, park
         // the thread.
-        let mut task_to_wake = runtime.tasks.map_locked(|tasks| tasks.woke.pop_front());
+        runtime.tasks.map_locked(|tasks| {
+            runtime.shared_tasks.map_locked(|shared| {
+                tasks.woke.extend(shared.new.drain(..));
+                for task_id in shared.tasks_to_wake.drain() {
+                    if let Some(task) = tasks.pending.remove(&task_id) {
+                        tasks.woke.push_back(task);
+                    }
+                }
+            });
 
-        if task_to_wake.is_none() {
-            wait_for_budget = false;
-            runtime
-                .context
-                .data
-                .map_locked(|data| data.budget.park_for_budget());
-        } else {
-            // Call poll on all of the futures that are awake.
-            while let Some(mut task) = task_to_wake {
-                let result = task.poll();
-                task_to_wake = runtime.tasks.map_locked(|tasks| {
+            if tasks.woke.is_empty() {
+                wait_for_budget = false;
+                runtime
+                    .context
+                    .data
+                    .map_locked(|data| data.budget.park_for_budget());
+            } else {
+                // Call poll on all of the futures that are awake.
+                for mut task in tasks.woke.drain(..) {
+                    let result = task.poll();
+
                     match result {
                         Poll::Ready(_) => {
                             // The future is complete.
@@ -211,31 +235,33 @@ where
                             tasks.pending.insert(task.id(), task);
                         }
                     }
-                    tasks.woke.pop_front()
-                });
+                }
             }
-        }
+        });
     }
 }
 
 /// A future that was budgeted with [`run_with_budget()`] that has not yet
 /// completed.
-struct IncompleteFuture<Budget, Tasks, Backing, F>
+struct IncompleteFuture<Budget, Tasks, SharedTasks, Backing, F>
 where
     F: Future,
-    Tasks: Container<RuntimeTasks>,
+    Tasks: Container<RunningTasks>,
+    SharedTasks: Container<PendingTasks>,
     Backing: Container<BudgetContextData<Budget>>,
 {
     future: Pin<Box<F>>,
     waker: Waker,
-    runtime: Runtime<Budget, Tasks, Backing>,
+    runtime: Runtime<Budget, Tasks, SharedTasks, Backing>,
 }
 
-impl<Budget, Tasks, Backing, F> IncompleteFuture<Budget, Tasks, Backing, F>
+impl<Budget, Tasks, SharedTasks, Backing, F>
+    IncompleteFuture<Budget, Tasks, SharedTasks, Backing, F>
 where
     F: Future,
     Budget: Budgetable,
-    Tasks: Container<RuntimeTasks>,
+    Tasks: Container<RunningTasks>,
+    SharedTasks: Container<PendingTasks>,
     Backing: Container<BudgetContextData<Budget>>,
 {
     /// Adds `additional_budget` to the remaining balance and continues
@@ -243,7 +269,7 @@ where
     pub fn continue_with_additional_budget(
         self,
         additional_budget: usize,
-    ) -> Progress<Budget, Tasks, Backing, F> {
+    ) -> Progress<Budget, Tasks, SharedTasks, Backing, F> {
         let Self {
             future,
             waker,
@@ -259,7 +285,7 @@ where
     }
     /// Waits for additional budget to be allocated through
     /// [`ReplenishableBudget::replenish()`].
-    pub fn wait_for_budget(self) -> Progress<Budget, Tasks, Backing, F> {
+    pub fn wait_for_budget(self) -> Progress<Budget, Tasks, SharedTasks, Backing, F> {
         let Self {
             future,
             waker,
@@ -273,14 +299,15 @@ where
 
 /// The progress of a future's execution.
 #[must_use]
-enum Progress<Budget, Tasks, Backing, F: Future>
+enum Progress<Budget, Tasks, SharedTasks, Backing, F: Future>
 where
-    Tasks: Container<RuntimeTasks>,
+    Tasks: Container<RunningTasks>,
+    SharedTasks: Container<PendingTasks>,
     Backing: Container<BudgetContextData<Budget>>,
 {
     /// The future was interrupted because it requested to spend more budget
     /// than was available.
-    NoBudget(IncompleteFuture<Budget, Tasks, Backing, F>),
+    NoBudget(IncompleteFuture<Budget, Tasks, SharedTasks, Backing, F>),
     /// The future has completed.
     Complete(BudgetResult<F::Output, Budget>),
 }
@@ -293,7 +320,7 @@ mod budget_waker {
         thread::Thread,
     };
 
-    use crate::{blocking::RuntimeTasks, Container, NotSyncContainer, SyncContainer};
+    use crate::{blocking::PendingTasks, Container, NotSyncContainer, SyncContainer};
 
     struct WakerData<Tasks> {
         thread: Thread,
@@ -303,21 +330,14 @@ mod budget_waker {
 
     impl<Tasks> WakerData<Tasks>
     where
-        Tasks: Container<RuntimeTasks>,
+        Tasks: Container<PendingTasks>,
     {
         pub fn wake(&self) {
-            if let Some(task_id) = &self.task_id {
-                let woke_task = self.tasks.map_locked(|tasks| {
-                    if let Some(task) = tasks.pending.remove(task_id) {
-                        tasks.woke.push_back(task);
-                        true
-                    } else {
-                        false
-                    }
-                });
-                if woke_task {
-                    self.thread.unpark();
-                }
+            if let Some(task_id) = self.task_id {
+                self.tasks
+                    .map_locked(|tasks| tasks.tasks_to_wake.insert(task_id));
+
+                self.thread.unpark();
             } else {
                 // The main task is unblocked, we always unpark.
                 self.thread.unpark();
@@ -327,7 +347,7 @@ mod budget_waker {
 
     pub(crate) fn for_current_thread<Tasks>(tasks: Tasks, task_id: Option<u64>) -> Waker
     where
-        Tasks: Container<RuntimeTasks>,
+        Tasks: Container<PendingTasks>,
     {
         let arc_thread = Arc::new(WakerData {
             tasks,
@@ -341,7 +361,7 @@ mod budget_waker {
 
     unsafe fn clone<Tasks>(arc_thread: *const ()) -> RawWaker
     where
-        Tasks: Container<RuntimeTasks>,
+        Tasks: Container<PendingTasks>,
     {
         let arc_thread: Arc<WakerData<Tasks>> =
             Arc::from_raw(arc_thread.cast::<WakerData<Tasks>>());
@@ -355,11 +375,11 @@ mod budget_waker {
 
     fn vtable<Tasks>() -> &'static RawWakerVTable
     where
-        Tasks: Container<RuntimeTasks>,
+        Tasks: Container<PendingTasks>,
     {
         let task_type = TypeId::of::<Tasks>();
-        let sync_type = TypeId::of::<SyncContainer<RuntimeTasks>>();
-        let not_sync_type = TypeId::of::<NotSyncContainer<RuntimeTasks>>();
+        let sync_type = TypeId::of::<SyncContainer<PendingTasks>>();
+        let not_sync_type = TypeId::of::<NotSyncContainer<PendingTasks>>();
 
         if task_type == sync_type {
             &SYNC_VTABLE
@@ -372,7 +392,7 @@ mod budget_waker {
 
     unsafe fn wake_consuming<Tasks>(arc_thread: *const ())
     where
-        Tasks: Container<RuntimeTasks>,
+        Tasks: Container<PendingTasks>,
     {
         let arc_thread: Arc<WakerData<Tasks>> = Arc::from_raw(arc_thread as *mut WakerData<Tasks>);
         arc_thread.wake();
@@ -380,7 +400,7 @@ mod budget_waker {
 
     unsafe fn wake_by_ref<Tasks>(arc_thread: *const ())
     where
-        Tasks: Container<RuntimeTasks>,
+        Tasks: Container<PendingTasks>,
     {
         let arc_thread: Arc<WakerData<Tasks>> = Arc::from_raw(arc_thread as *mut WakerData<Tasks>);
         arc_thread.wake();
@@ -394,17 +414,17 @@ mod budget_waker {
     }
 
     const SYNC_VTABLE: RawWakerVTable = RawWakerVTable::new(
-        clone::<SyncContainer<RuntimeTasks>>,
-        wake_consuming::<SyncContainer<RuntimeTasks>>,
-        wake_by_ref::<SyncContainer<RuntimeTasks>>,
-        drop_waker::<SyncContainer<RuntimeTasks>>,
+        clone::<SyncContainer<PendingTasks>>,
+        wake_consuming::<SyncContainer<PendingTasks>>,
+        wake_by_ref::<SyncContainer<PendingTasks>>,
+        drop_waker::<SyncContainer<PendingTasks>>,
     );
 
     const NOT_SYNC_VTABLE: RawWakerVTable = RawWakerVTable::new(
-        clone::<NotSyncContainer<RuntimeTasks>>,
-        wake_consuming::<NotSyncContainer<RuntimeTasks>>,
-        wake_by_ref::<NotSyncContainer<RuntimeTasks>>,
-        drop_waker::<NotSyncContainer<RuntimeTasks>>,
+        clone::<NotSyncContainer<PendingTasks>>,
+        wake_consuming::<NotSyncContainer<PendingTasks>>,
+        wake_by_ref::<NotSyncContainer<PendingTasks>>,
+        drop_waker::<NotSyncContainer<PendingTasks>>,
     );
 }
 
@@ -512,8 +532,9 @@ macro_rules! define_public_interface {
             };
 
             use crate::{
-                blocking::RuntimeTasks, spend::$modname::SpendBudget, BudgetContextData,
-                BudgetResult, Budgetable,
+                blocking::{PendingTasks, RunningTasks},
+                spend::$modname::SpendBudget,
+                BudgetContextData, BudgetResult, Budgetable,
             };
 
             /// A lightweight asynchronous runtime that runs a future while
@@ -529,7 +550,8 @@ macro_rules! define_public_interface {
             pub struct Runtime<Budget>(
                 super::Runtime<
                     Budget,
-                    crate::$backing<RuntimeTasks>,
+                    crate::$backing<RunningTasks>,
+                    crate::$backing<PendingTasks>,
                     crate::$backing<BudgetContextData<Budget>>,
                 >,
             )
@@ -641,7 +663,8 @@ macro_rules! define_public_interface {
                 From<
                     super::Progress<
                         Budget,
-                        crate::$backing<RuntimeTasks>,
+                        crate::$backing<RunningTasks>,
+                        crate::$backing<PendingTasks>,
                         crate::$backing<BudgetContextData<Budget>>,
                         F,
                     >,
@@ -653,7 +676,8 @@ macro_rules! define_public_interface {
                 fn from(
                     progress: super::Progress<
                         Budget,
-                        crate::$backing<RuntimeTasks>,
+                        crate::$backing<RunningTasks>,
+                        crate::$backing<PendingTasks>,
                         crate::$backing<BudgetContextData<Budget>>,
                         F,
                     >,
@@ -672,7 +696,8 @@ macro_rules! define_public_interface {
             pub struct IncompleteFuture<Budget, F>(
                 pub(super)  super::IncompleteFuture<
                     Budget,
-                    crate::$backing<RuntimeTasks>,
+                    crate::$backing<RunningTasks>,
+                    crate::$backing<PendingTasks>,
                     crate::$backing<BudgetContextData<Budget>>,
                     F,
                 >,
